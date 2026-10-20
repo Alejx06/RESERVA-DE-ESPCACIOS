@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sistema de Reservas de Espacios</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<section class="auth-screen" id="authScreen">
+  <div class="auth-card">
+    <span class="eyebrow">DIRECCIÓN DE INFRAESTRUCTURA ACADÉMICA</span>
+    <h1>Reservas institucionales</h1>
+    <p>Ingresa con tu correo institucional terminado en <strong id="emailDomain">@amigo.edu.co</strong>.</p>
+    <div class="auth-tabs">
+      <button class="auth-tab active" type="button" data-auth-view="login">Iniciar sesión</button>
+      <button class="auth-tab" type="button" data-auth-view="register">Crear cuenta de estudiante</button>
+    </div>
+    <form id="loginForm">
+      <label class="auth-field" for="loginEmail">Correo institucional
+        <input id="loginEmail" type="email" autocomplete="username" required>
+      </label>
+      <label class="auth-field" for="loginPassword">Contraseña
+        <input id="loginPassword" type="password" autocomplete="current-password" required>
+      </label>
+      <p class="auth-feedback" id="loginFeedback" role="alert"></p>
+      <button class="primary auth-submit" type="submit">Ingresar</button>
+    </form>
+    <form id="registerForm" hidden>
+      <label class="auth-field" for="registerName">Nombre completo
+        <input id="registerName" type="text" autocomplete="name" maxlength="80" required>
+      </label>
+      <label class="auth-field" for="registerEmail">Correo institucional
+        <input id="registerEmail" type="email" autocomplete="email" required>
+      </label>
+      <label class="auth-field" for="registerPassword">Contraseña (mínimo 12 caracteres)
+        <input id="registerPassword" type="password" autocomplete="new-password" minlength="12" required>
+      </label>
+      <label class="auth-field" for="registerConfirm">Confirmar contraseña
+        <input id="registerConfirm" type="password" autocomplete="new-password" minlength="12" required>
+      </label>
+      <p class="auth-feedback" id="registerFeedback" role="alert"></p>
+      <button class="primary auth-submit" type="submit">Crear cuenta de estudiante</button>
+    </form>
+    <form id="verificationForm" hidden>
+      <p>Enviamos un código de 8 dígitos a tu correo institucional. El código vence en 15 minutos.</p>
+      <label class="auth-field" for="verificationEmail">Correo institucional
+        <input id="verificationEmail" type="email" readonly required>
+      </label>
+      <label class="auth-field" for="verificationCode">Código de verificación
+        <input id="verificationCode" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="one-time-code" required>
+      </label>
+      <p class="auth-feedback" id="verificationFeedback" role="alert"></p>
+      <button class="primary auth-submit" type="submit">Verificar correo</button>
+      <button class="ghost auth-submit" id="resendVerification" type="button">Enviar otro código</button>
+    </form>
+  </div>
+</section>
+
+<div id="appShell" hidden>
+<header class="top">
+  <div class="brand">
+    <span class="eyebrow">DIRECCIÓN DE INFRAESTRUCTURA ACADÉMICA</span>
+    <h1>Sistema de Reservas de Espacios</h1>
+  </div>
+  <div class="header-right">
+    <div class="session-user"><span id="userName"></span><strong id="roleBadge"></strong><button class="logout-button" id="logoutButton" type="button">Cerrar sesión</button></div>
+    <div class="clock" id="clock"></div>
+    <div class="conn" id="conn">Conectando…</div>
+  </div>
+</header>
+
+<div class="banner" id="banner" hidden></div>
+
+<section class="hero">
+  <div class="stat-block">
+    <div class="big" id="heroCount">–</div>
+    <div class="big-label" id="heroLabel">espacios disponibles ahora mismo</div>
+  </div>
+  <div class="mini-stats">
+    <div class="mini-stat"><b id="statSalones">–</b>Salones</div>
+    <div class="mini-stat"><b id="statLabs">–</b>Laboratorios</div>
+    <div class="mini-stat"><b id="statSalas">–</b>Salas</div>
+    <div class="mini-stat"><b id="statReservas">–</b>Reservas activas hoy</div>
+  </div>
+</section>
+
+<div class="toolbar">
+  <div class="tabs" id="tabs">
+    <button data-type="all" class="active">Todos</button>
+    <button data-type="salon">Salones</button>
+    <button data-type="laboratorio">Laboratorios</button>
+    <button data-type="sala">Salas</button>
+  </div>
+  <div class="toolbar-right">
+    <div class="date-ctl">
+      <label for="dateInput">Fecha</label>
+      <input type="date" id="dateInput">
+      <button class="ghost small" id="todayBtn" type="button">Hoy</button>
+    </div>
+    <div class="legend">
+      <span><span class="dot free"></span>Disponible</span>
+      <span><span class="dot busy"></span>Ocupado</span>
+    </div>
+  </div>
+</div>
+
+<main>
+  <section class="admin-section" id="adminSection" hidden>
+    <div class="history-head"><h2>Administración de espacios</h2><p>Solo visible para cuentas administrativas.</p></div>
+    <form id="spaceForm" class="admin-form">
+      <h3 id="spaceFormTitle">Registrar espacio</h3>
+      <div class="field-row">
+        <label class="field">Nombre<input id="spaceName" maxlength="80" required></label>
+        <label class="field">Tipo<select id="spaceType"><option value="salon">Salón</option><option value="laboratorio">Laboratorio</option><option value="sala">Sala</option></select></label>
+        <label class="field">Capacidad<input id="spaceCapacity" type="number" min="1" max="500" required></label>
+        <label class="field">Ubicación<input id="spaceLocation" maxlength="100"></label>
+      </div>
+      <div class="panel-actions"><button class="primary" type="submit" id="saveSpaceButton">Guardar espacio</button><button class="ghost" type="button" id="resetSpaceForm" hidden>Cancelar edición</button></div>
+      <p class="form-error" id="spaceFeedback" role="alert"></p>
+    </form>
+    <div class="admin-list" id="adminSpaces"></div>
+
+    <div class="history-head"><h2>Cuentas de personal</h2><p>Solo el administrador asigna perfiles de profesor o administrativo.</p></div>
+    <form id="staffForm" class="admin-form">
+      <div class="field-row">
+        <label class="field">Nombre completo<input id="staffName" maxlength="80" required></label>
+        <label class="field">Correo institucional<input id="staffEmail" type="email" required></label>
+        <label class="field">Perfil<select id="staffRole"><option>Profesor</option><option>Administrativo</option></select></label>
+        <label class="field">Contraseña inicial (mínimo 12 caracteres)<input id="staffPassword" type="password" minlength="12" required></label>
+      </div>
+      <button class="primary" type="submit">Crear cuenta de personal</button>
+      <p class="form-error" id="staffFeedback" role="alert"></p>
+    </form>
+    <div class="admin-list" id="adminUsers"></div>
+  </section>
+
+  <div class="board" id="board"></div>
+
+  <div class="history-head">
+    <h2 id="historyTitle">Historial de uso</h2>
+    <p>Registro de responsables por cada espacio reservado, para consulta y control administrativo.</p>
+  </div>
+  <table class="history">
+    <thead>
+      <tr><th>Espacio</th><th>Horario</th><th>Responsable</th><th>Rol</th><th>Motivo</th><th>Estado</th></tr>
+    </thead>
+    <tbody id="historyBody"></tbody>
+  </table>
+  <div class="empty" id="historyEmpty" style="display:none;">No hay reservas registradas para esta fecha.</div>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Iniciar backend de reservas",
+            "type": "shell",
+            "command": "npm --prefix backend start",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "backend-server",
+                "severity": "info",
+                "pattern": {
+                    "regexp": ".*",
+                    "file": 1,
+                    "line": 1,
+                    "message": 2
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".*Sistema de Reservas de Espacios.*",
+                    "endsPattern": "^\\s*API REST\\s*:\\s*http://localhost:3000/api\\s*$"
+                }
+            }
+        }
+    ]
+}

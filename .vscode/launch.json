@@ -1,0 +1,33 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Depurar backend (Node)",
+            "program": "${workspaceFolder}/backend/server.js",
+            "cwd": "${workspaceFolder}/backend",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "runtimeExecutable": "node",
+            "serverReadyAction": {
+                "pattern": "Aplicación web\\s*:\\s*http://localhost:(\\d+)",
+                "uriFormat": "http://localhost:%s",
+                "action": "openExternally"
+            }
+        },
+        {
+            "type": "pwa-chrome",
+            "request": "launch",
+            "name": "Depurar Sistema de Reservas",
+            "url": "http://localhost:3000/?debug=1",
+            "preLaunchTask": "Iniciar backend de reservas",
+            "webRoot": "${workspaceFolder}",
+            "runtimeArgs": [
+                "--disable-cache"
+            ]
+        }
+    ]
+}
