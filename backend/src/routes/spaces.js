@@ -1,5 +1,6 @@
 const express = require('express');
 const { HttpError } = require('../utils/errors');
+const { asyncHandler } = require('../utils/asyncHandler');
 
 function spacesRouter({ spaces }, { requireAdmin }) {
   const router = express.Router();
@@ -10,19 +11,19 @@ function spacesRouter({ spaces }, { requireAdmin }) {
     return id;
   };
 
-  router.get('/', (req, res) => {
-    res.json(spaces.list({
+  router.get('/', asyncHandler(async (req, res) => {
+    res.json(await spaces.list({
       type: req.query.type,
       includeInactive: req.user.role === 'Administrativo' && req.query.includeInactive === 'true',
     }));
-  });
-  router.get('/:id', (req, res) => res.json(spaces.getById(parseId(req))));
-  router.post('/', requireAdmin, (req, res) => res.status(201).json(spaces.create(req.body || {})));
-  router.put('/:id', requireAdmin, (req, res) => res.json(spaces.update(parseId(req), req.body || {})));
-  router.delete('/:id', requireAdmin, (req, res) => {
-    spaces.remove(parseId(req));
+  }));
+  router.get('/:id', asyncHandler(async (req, res) => res.json(await spaces.getById(parseId(req)))));
+  router.post('/', requireAdmin, asyncHandler(async (req, res) => res.status(201).json(await spaces.create(req.body || {}))));
+  router.put('/:id', requireAdmin, asyncHandler(async (req, res) => res.json(await spaces.update(parseId(req), req.body || {}))));
+  router.delete('/:id', requireAdmin, asyncHandler(async (req, res) => {
+    await spaces.remove(parseId(req));
     res.status(204).end();
-  });
+  }));
 
   return router;
 }

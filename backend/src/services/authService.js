@@ -4,7 +4,7 @@ const { HttpError } = require('../utils/errors');
 
 const scrypt = promisify(crypto.scrypt);
 const SESSION_COOKIE = 'reserve_session';
-const PASSWORD_MIN_LENGTH = 12;
+const PASSWORD_MIN_LENGTH = 8;
 const SESSION_TTL_HOURS = 12;
 
 function sanitizeUser(user) {
@@ -40,6 +40,8 @@ async function verifyPassword(password, storedHash) {
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
+const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
+
 function createAuthService({ db, config, clock, sendVerificationEmail }) {
   const domain = config.EMAIL_DOMAIN || 'amigo.edu.co';
   const ttlHours = config.SESSION_TTL_HOURS || SESSION_TTL_HOURS;
@@ -67,13 +69,13 @@ function createAuthService({ db, config, clock, sendVerificationEmail }) {
     if (!config.ROLES.includes(role)) throw new HttpError(400, 'El perfil seleccionado no es válido', 'VALIDATION');
     const passwordHash = await hashPassword(safePassword);
     try {
-      const result = db.prepare(`
-        INSERT INTO users (email, full_name, password_hash, role, active, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(normalizedEmail, name, passwordHash, role, active, clock().toISOString());
-      return sanitizeUser(db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid));
+      const result = await db.run(
+        'INSERT INTO users (email, full_name, password_hash, role, active, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [normalizedEmail, name, passwordHash, role, active, clock().toISOString()]
+      );
+      return sanitizeUser(await db.get('SELECT * FROM users WHERE id = ?', [result.insertId]));
     } catch (error) {
-      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      if (error.code === 'ER_DUP_ENTRY') {
         throw new HttpError(409, 'Ya existe una cuenta con ese correo institucional', 'DUPLICATE');
       }
       throw error;
@@ -88,12 +90,13 @@ function createAuthService({ db, config, clock, sendVerificationEmail }) {
     const now = clock();
     const expiresAt = new Date(now.getTime() + (config.EMAIL_VERIFICATION_TTL_MINUTES || 15) * 60 * 1000).toISOString();
     const codeHash = await hashPassword(code);
-    db.prepare(`
-      INSERT INTO account_verifications (user_id, code_hash, expires_at, attempts, created_at)
-      VALUES (?, ?, ?, 0, ?)
-      ON CONFLICT(user_id) DO UPDATE SET code_hash = excluded.code_hash,
-        expires_at = excluded.expires_at, attempts = 0, created_at = excluded.created_at
-    `).run(user.id, codeHash, expiresAt, now.toISOString());
+    await db.run(
+      `INSERT INTO account_verifications (user_id, code_hash, expires_at, attempts, created_at)
+       VALUES (?, ?, ?, 0, ?)
+       ON DUPLICATE KEY UPDATE code_hash = VALUES(code_hash), expires_at = VALUES(expires_at),
+         attempts = 0, created_at = VALUES(created_at)`,
+      [user.id, codeHash, expiresAt, now.toISOString()]
+    );
     try {
       await sendVerificationEmail({ email: user.email, fullName: user.fullName, code });
     } catch (error) {
@@ -108,7 +111,16 @@ function createAuthService({ db, config, clock, sendVerificationEmail }) {
     try {
       user = await createAccount({ ...input, role: 'Estudiante', active: 0 });
     } catch (error) {
-      if (error.code === 'DUPLICATE') return { accepted: true };
+      if (error.code === 'DUPLICATE') {
+        const existing = await db.get('SELECT * FROM users WHERE email = ?', [normalizeEmail(input.email, domain)]);
+        if (existing && existing.role === 'Estudiante' && existing.active) {
+          throw new HttpError(409, 'Esta cuenta ya está activada. Inicia sesión con tu correo y contraseña.', 'ACCOUNT_ACTIVE');
+        }
+        if (existing && existing.role === 'Estudiante') {
+          await issueVerification(sanitizeUser(existing));
+        }
+        return { accepted: true };
+      }
       throw error;
     }
     await issueVerification(user);
@@ -124,35 +136,32 @@ function createAuthService({ db, config, clock, sendVerificationEmail }) {
 
   async function verifyEmail({ email, code }) {
     const normalizedEmail = normalizeEmail(email, domain);
-    const user = db.prepare('SELECT id, active FROM users WHERE email = ? AND role = ?')
-      .get(normalizedEmail, 'Estudiante');
-    const verification = user && db.prepare('SELECT * FROM account_verifications WHERE user_id = ?').get(user.id);
+    const user = await db.get('SELECT id, active FROM users WHERE email = ? AND role = ?', [normalizedEmail, 'Estudiante']);
+    const verification = user && await db.get('SELECT * FROM account_verifications WHERE user_id = ?', [user.id]);
     if (!user || user.active || !verification || !/^\d{8}$/.test(String(code || ''))) {
       throw new HttpError(400, 'El código no es válido o ya venció', 'INVALID_VERIFICATION');
     }
     if (verification.expires_at <= clock().toISOString() || verification.attempts >= 5) {
-      db.prepare('DELETE FROM account_verifications WHERE user_id = ?').run(user.id);
+      await db.run('DELETE FROM account_verifications WHERE user_id = ?', [user.id]);
       throw new HttpError(400, 'El código no es válido o ya venció', 'INVALID_VERIFICATION');
     }
-    db.prepare('UPDATE account_verifications SET attempts = attempts + 1 WHERE user_id = ?').run(user.id);
+    await db.run('UPDATE account_verifications SET attempts = attempts + 1 WHERE user_id = ?', [user.id]);
     if (!(await verifyPassword(String(code), verification.code_hash))) {
       if (verification.attempts + 1 >= 5) {
-        db.prepare('DELETE FROM account_verifications WHERE user_id = ?').run(user.id);
+        await db.run('DELETE FROM account_verifications WHERE user_id = ?', [user.id]);
       }
       throw new HttpError(400, 'El código no es válido o ya venció', 'INVALID_VERIFICATION');
     }
-    const run = db.transaction(() => {
-      db.prepare('UPDATE users SET active = 1 WHERE id = ?').run(user.id);
-      db.prepare('DELETE FROM account_verifications WHERE user_id = ?').run(user.id);
+    await db.transaction(async (tx) => {
+      await tx.run('UPDATE users SET active = 1 WHERE id = ?', [user.id]);
+      await tx.run('DELETE FROM account_verifications WHERE user_id = ?', [user.id]);
     });
-    run();
     return { verified: true };
   }
 
   async function resendVerification(email) {
     const normalizedEmail = normalizeEmail(email, domain);
-    const userRow = db.prepare('SELECT * FROM users WHERE email = ? AND role = ? AND active = 0')
-      .get(normalizedEmail, 'Estudiante');
+    const userRow = await db.get('SELECT * FROM users WHERE email = ? AND role = ? AND active = 0', [normalizedEmail, 'Estudiante']);
     if (userRow) await issueVerification(sanitizeUser(userRow));
     return { accepted: true };
   }
@@ -162,7 +171,7 @@ function createAuthService({ db, config, clock, sendVerificationEmail }) {
     if (typeof password !== 'string' || password.length < 1 || password.length > 128) {
       throw new HttpError(400, 'Correo y contraseña son obligatorios', 'VALIDATION');
     }
-    const row = db.prepare('SELECT * FROM users WHERE email = ? AND active = 1').get(normalizedEmail);
+    const row = await db.get('SELECT * FROM users WHERE email = ? AND active = 1', [normalizedEmail]);
     if (!row) {
       dummyPasswordHash = dummyPasswordHash || await hashPassword('not-a-real-account-password');
       await verifyPassword(password, dummyPasswordHash);
@@ -175,51 +184,49 @@ function createAuthService({ db, config, clock, sendVerificationEmail }) {
     const token = crypto.randomBytes(32).toString('base64url');
     const now = clock();
     const expiresAt = new Date(now.getTime() + ttlHours * 60 * 60 * 1000).toISOString();
-    db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(now.toISOString());
-    db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
-      .run(crypto.createHash('sha256').update(token).digest('hex'), row.id, expiresAt, now.toISOString());
+    await db.run('DELETE FROM sessions WHERE expires_at <= ?', [now.toISOString()]);
+    await db.run('INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)', [
+      sha256(token), row.id, expiresAt, now.toISOString(),
+    ]);
     return { token, user: sanitizeUser(row), expiresAt };
   }
 
-  function getSession(token) {
+  async function getSession(token) {
     if (!token) return null;
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const row = db.prepare(`
-      SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
-      WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1
-    `).get(tokenHash, clock().toISOString());
+    const row = await db.get(
+      `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+       WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1`,
+      [sha256(token), clock().toISOString()]
+    );
     return row ? sanitizeUser(row) : null;
   }
 
-  function logout(token) {
-    if (token) {
-      db.prepare('DELETE FROM sessions WHERE token_hash = ?')
-        .run(crypto.createHash('sha256').update(token).digest('hex'));
-    }
+  async function logout(token) {
+    if (token) await db.run('DELETE FROM sessions WHERE token_hash = ?', [sha256(token)]);
   }
 
-  function listUsers() {
-    return db.prepare('SELECT id, email, full_name, role, active, created_at FROM users ORDER BY full_name')
-      .all().map((user) => ({
-        id: user.id,
-        email: user.email,
-        fullName: user.full_name,
-        role: user.role,
-        active: !!user.active,
-        createdAt: user.created_at,
-      }));
+  async function listUsers() {
+    const rows = await db.all('SELECT id, email, full_name, role, active, created_at FROM users ORDER BY full_name');
+    return rows.map((user) => ({
+      id: user.id,
+      email: user.email,
+      fullName: user.full_name,
+      role: user.role,
+      active: !!user.active,
+      createdAt: user.created_at,
+    }));
   }
 
-  function deactivateUser(id, currentUserId) {
-    const user = db.prepare('SELECT id, role FROM users WHERE id = ? AND active = 1').get(id);
+  async function deactivateUser(id, currentUserId) {
+    const user = await db.get('SELECT id, role FROM users WHERE id = ? AND active = 1', [id]);
     if (!user) throw new HttpError(404, 'La cuenta no existe o ya está desactivada', 'NOT_FOUND');
     if (id === currentUserId) throw new HttpError(409, 'No puedes desactivar tu propia cuenta', 'SELF_DEACTIVATION');
     if (user.role === 'Administrativo') {
-      const admins = db.prepare("SELECT COUNT(*) AS total FROM users WHERE role = 'Administrativo' AND active = 1").get().total;
-      if (admins <= 1) throw new HttpError(409, 'No se puede desactivar el último administrador', 'LAST_ADMIN');
+      const { total } = await db.get("SELECT COUNT(*) AS total FROM users WHERE role = 'Administrativo' AND active = 1");
+      if (total <= 1) throw new HttpError(409, 'No se puede desactivar el último administrador', 'LAST_ADMIN');
     }
-    db.prepare('UPDATE users SET active = 0 WHERE id = ?').run(id);
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+    await db.run('UPDATE users SET active = 0 WHERE id = ?', [id]);
+    await db.run('DELETE FROM sessions WHERE user_id = ?', [id]);
   }
 
   return {
@@ -245,29 +252,27 @@ async function bootstrapAdmin(db, config, clock = () => new Date()) {
   if (password.length < PASSWORD_MIN_LENGTH || password.length > 128) {
     throw new Error(`BOOTSTRAP_ADMIN_PASSWORD debe tener entre ${PASSWORD_MIN_LENGTH} y 128 caracteres`);
   }
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(normalizedEmail);
+  const existing = await db.get('SELECT id, role, active FROM users WHERE email = ?', [normalizedEmail]);
   if (existing) {
-    const user = db.prepare('SELECT id, role, active FROM users WHERE id = ?').get(existing.id);
-    if (user.role === 'Administrativo' && user.active) return false;
-    if (user.active) {
+    if (existing.role === 'Administrativo' && existing.active) return false;
+    if (existing.active) {
       throw new Error('BOOTSTRAP_ADMIN_EMAIL ya pertenece a una cuenta que no es administrativa');
     }
     const passwordHash = await hashPassword(password);
-    const run = db.transaction(() => {
-      db.prepare(`
-        UPDATE users SET full_name = ?, password_hash = ?, role = 'Administrativo', active = 1
-        WHERE id = ?
-      `).run('Administrador institucional', passwordHash, user.id);
-      db.prepare('DELETE FROM account_verifications WHERE user_id = ?').run(user.id);
+    await db.transaction(async (tx) => {
+      await tx.run(
+        "UPDATE users SET full_name = ?, password_hash = ?, role = 'Administrativo', active = 1 WHERE id = ?",
+        ['Administrador institucional', passwordHash, existing.id]
+      );
+      await tx.run('DELETE FROM account_verifications WHERE user_id = ?', [existing.id]);
     });
-    run();
     return true;
   }
   const passwordHash = await hashPassword(password);
-  db.prepare(`
-    INSERT INTO users (email, full_name, password_hash, role, created_at)
-    VALUES (?, ?, ?, 'Administrativo', ?)
-  `).run(normalizedEmail, 'Administrador institucional', passwordHash, clock().toISOString());
+  await db.run(
+    "INSERT INTO users (email, full_name, password_hash, role, created_at) VALUES (?, ?, ?, 'Administrativo', ?)",
+    [normalizedEmail, 'Administrador institucional', passwordHash, clock().toISOString()]
+  );
   return true;
 }
 
@@ -284,23 +289,27 @@ function sessionCookie(token, config, maxAge) {
 
 function authMiddleware(authService) {
   return {
-    requireAuth(req, res, next) {
-      const token = getCookieToken(req);
-      const user = authService.getSession(token);
-      if (!user) return next(new HttpError(401, 'Inicia sesión para continuar', 'UNAUTHORIZED'));
-      req.user = user;
-      req.sessionToken = token;
-      const origin = req.get('origin');
-      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && origin) {
-        try {
-          if (new URL(origin).host !== req.get('host')) {
+    async requireAuth(req, res, next) {
+      try {
+        const token = getCookieToken(req);
+        const user = await authService.getSession(token);
+        if (!user) return next(new HttpError(401, 'Inicia sesión para continuar', 'UNAUTHORIZED'));
+        req.user = user;
+        req.sessionToken = token;
+        const origin = req.get('origin');
+        if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && origin) {
+          try {
+            if (new URL(origin).host !== req.get('host')) {
+              return next(new HttpError(403, 'Origen no permitido', 'FORBIDDEN'));
+            }
+          } catch {
             return next(new HttpError(403, 'Origen no permitido', 'FORBIDDEN'));
           }
-        } catch {
-          return next(new HttpError(403, 'Origen no permitido', 'FORBIDDEN'));
         }
+        return next();
+      } catch (error) {
+        return next(error);
       }
-      next();
     },
     requireAdmin(req, res, next) {
       if (!req.user || req.user.role !== 'Administrativo') {

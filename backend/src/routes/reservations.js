@@ -1,4 +1,5 @@
 const express = require('express');
+const { asyncHandler } = require('../utils/asyncHandler');
 const { HttpError } = require('../utils/errors');
 
 function reservationsRouter({ reservations }) {
@@ -10,23 +11,21 @@ function reservationsRouter({ reservations }) {
     return id;
   };
 
-  router.get('/', (req, res) => {
-    res.json(
-      reservations.list({
-        date: req.query.date,
-        spaceId: req.query.spaceId,
-        responsible: req.query.responsible,
-        includeCancelled: req.query.includeCancelled === 'true',
-        limit: req.query.limit,
-        user: req.user,
-      })
-    );
-  });
-  router.get('/:id', (req, res) => res.json(reservations.getById(parseId(req), req.user)));
-  router.post('/', (req, res) => res.status(201).json(reservations.create(req.body || {}, req.user)));
-  router.put('/:id', (req, res) => res.json(reservations.update(parseId(req), req.body || {}, req.user)));
-  // "Liberar espacio": cancela la reserva (queda registrada como cancelada en el historial).
-  router.delete('/:id', (req, res) => res.json(reservations.cancel(parseId(req), req.user)));
+  router.get('/', asyncHandler(async (req, res) => {
+    res.json(await reservations.list({
+      date: req.query.date,
+      spaceId: req.query.spaceId,
+      responsible: req.query.responsible,
+      includeCancelled: req.query.includeCancelled === 'true',
+      limit: req.query.limit,
+      user: req.user,
+    }));
+  }));
+  router.get('/:id', asyncHandler(async (req, res) => res.json(await reservations.getById(parseId(req), req.user))));
+  router.post('/', asyncHandler(async (req, res) => res.status(201).json(await reservations.create(req.body || {}, req.user))));
+  router.put('/:id', asyncHandler(async (req, res) => res.json(await reservations.update(parseId(req), req.body || {}, req.user))));
+  // Cancelar: la reserva queda en el historial como "cancelada".
+  router.delete('/:id', asyncHandler(async (req, res) => res.json(await reservations.cancel(parseId(req), req.user))));
 
   return router;
 }

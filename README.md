@@ -1,168 +1,152 @@
 # Sistema de Reservas de Espacios
 
-Aplicación web para gestionar la reserva de **salones, laboratorios y salas** de una institución
-educativa, con **disponibilidad en tiempo real** y **registro claro de los responsables** de cada uso.
+Aplicación web para reservar **salones, laboratorios y salas** de una institución educativa, con
+**disponibilidad en tiempo real**, **control de responsables**, **notificaciones por correo** y
+**reportes de ocupación** descargables en Excel.
 
 - **Frontend:** HTML + CSS + JavaScript (sin frameworks) en `frontend/`
-- **Backend:** Node.js + Express + SQLite (API REST) en `backend/`
-- El backend también sirve el frontend, así que todo corre con **un solo comando**.
+- **Backend:** Node.js + Express (API REST) en `backend/`
+- **Base de datos:** MySQL
+- El backend también sirve el frontend: todo corre con **un solo comando**.
 
 ## Cómo ejecutarlo
 
-Requisito: **Node.js 20 o superior** (recomendado la versión LTS). Verifica con `node -v`.
-El registro de estudiantes requiere un servidor SMTP institucional para enviar el código de verificación.
-El primer administrador se configura con variables de entorno; no hay claves administrativas por defecto.
+Necesitas **Node.js 20 o superior** (`node -v`) y **MySQL encendido** (MySQL Server, XAMPP o MariaDB).
 
 ```bash
 cd backend
+copy .env.example .env        # Windows   (Mac/Linux: cp .env.example .env)
+```
+
+Abre `backend/.env` y ajusta como mínimo `DB_USER`, `DB_PASSWORD` y `BOOTSTRAP_ADMIN_PASSWORD`
+(la contraseña de la primera cuenta administrativa, mínimo 8 caracteres). Luego:
+
+```bash
 npm install
 npm start
 ```
 
-Abre **http://localhost:3000** en el navegador. En desarrollo, la primera vez se crea la base de datos
-(`backend/data/reservas.db`) con 9 espacios y reservas de ejemplo. En producción no se cargan datos ficticios;
-el administrador registra los espacios reales desde el panel.
+Abre **http://localhost:3000** e inicia sesión con `BOOTSTRAP_ADMIN_EMAIL` (por defecto `admin@amigo.edu.co`).
+En el primer arranque el servidor **crea la base `reservas`, las tablas, la cuenta administrativa y datos de
+ejemplo** (9 espacios y unas 190 reservas de las últimas semanas, para que los reportes se vean con contenido).
 
-> Desde la raíz del proyecto también funciona: `npm run install:all` y luego `npm start`.
+> Desde la raíz también funciona: `npm run install:all` y `npm start`.
 
-Antes de iniciar, configura los secretos en el entorno del servidor (en producción, usa la sección
-de variables/secretos del proveedor de alojamiento; no los guardes en el repositorio):
+## Perfiles y permisos
 
-```powershell
-$env:BOOTSTRAP_ADMIN_EMAIL = "admin@amigo.edu.co"
-$env:BOOTSTRAP_ADMIN_PASSWORD = "usa-una-clave-unica-de-12-caracteres-o-mas"
-$env:SMTP_HOST = "smtp.amigo.edu.co"
-$env:SMTP_PORT = "587"
-$env:SMTP_USER = "cuenta-smtp"
-$env:SMTP_PASSWORD = "secreto-smtp"
-$env:SMTP_FROM = "Reservas <reservas@amigo.edu.co>"
-$env:NODE_ENV = "production"
-npm start
-```
+| Perfil | Cómo obtiene su cuenta | Qué puede hacer |
+|---|---|---|
+| **Estudiante** | Se registra solo con su correo `@amigo.edu.co` y confirma con un código que llega al correo | Ver disponibilidad, reservar, modificar y cancelar **sus** reservas |
+| **Profesor** | Lo crea el administrador | Igual que el estudiante |
+| **Administrativo** | Lo crea el administrador (o la cuenta inicial) | Todo lo anterior sobre cualquier reserva, más: gestionar espacios y cuentas, ver reportes y la bitácora de correos |
 
-`EMAIL_DOMAIN` acepta `amigo.edu.co` por defecto. El código de verificación vence en 15 minutos.
-La primera cuenta administrativa se crea una sola vez; cambiar las variables no restablece la contraseña
-de una cuenta que ya existe. En producción, publica siempre detrás de HTTPS.
-Configura `DB_PATH` sobre almacenamiento persistente y programa copias de seguridad; no uses un disco efímero
-del proveedor. La configuración actual de SQLite está pensada para una única instancia de la aplicación.
+Seguridad: contraseñas con scrypt, sesión en cookie `HttpOnly`/`SameSite=Strict`, límite de intentos de login,
+respuestas sin revelar si un correo existe, cabeceras CSP, consultas parametrizadas, y el responsable de cada
+reserva sale de la sesión (no se puede falsear).
+
+## Correos (confirmación, cambios, cancelación, recordatorio y código de registro)
+
+Al reservar, modificar o cancelar, el usuario recibe un correo. Además, **una hora antes** del inicio
+(`REMINDER_MINUTES_BEFORE`) se envía un recordatorio, una sola vez. Todo queda en la tabla `notifications`
+y el administrador lo ve en la pantalla (sección *Notificaciones por correo*).
+
+**Configurar Gmail** (o cualquier SMTP) en `backend/.env`:
+
+1. En la cuenta de Google activa la *verificación en 2 pasos* y crea una **contraseña de aplicación**
+   (Cuenta de Google → Seguridad → Contraseñas de aplicaciones).
+2. Completa:
+   ```
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=587
+   SMTP_SECURE=false
+   SMTP_USER=tucuenta@gmail.com
+   SMTP_PASSWORD=la-contraseña-de-aplicación
+   SMTP_FROM=Reservas Institucionales <tucuenta@gmail.com>
+   ```
+3. Reinicia `npm start`: al arrancar verás `Correo : SMTP smtp.gmail.com`.
+
+Sin SMTP: con `MAIL_SIMULATE=true` los correos se imprimen en la consola (ideal para probar). Sin SMTP y sin
+simulación, las reservas funcionan igual, pero los correos no se envían y el **registro de estudiantes no
+puede enviar el código** (el administrador puede crear cuentas manualmente).
+
+## Reportes (solo administrativo)
+
+En la pantalla principal, sección *Reportes de ocupación*: elige un rango de fechas y verás indicadores
+(reservas, horas, ocupación, cancelaciones, hora de mayor demanda), ocupación por espacio y por tipo, reservas
+por día de la semana y por hora, horas por perfil y las personas que más reservan. **Descargar Excel** genera
+un libro con 7 hojas (resumen, por espacio, tipo, perfil, día, hora y el detalle de cada reserva).
+
+Ocupación = horas reservadas ÷ horas disponibles (07:00 a 21:00, todos los días del rango).
 
 ## Estructura
 
 ```
 sistema-reservas-espacios/
 ├── backend/
-│   ├── server.js                 # Punto de entrada: abre la BD y levanta el servidor
-│   ├── package.json
-│   ├── data/                     # Aquí se crea reservas.db (SQLite)
-│   ├── tests/api.test.js         # Pruebas automáticas del API y migración de BD
+│   ├── server.js                 # Conecta a MySQL, crea el admin inicial y arranca recordatorios
+│   ├── .env.example              # Plantilla de configuración (copiar como .env)
+│   ├── tests/api.test.js         # 29 pruebas automáticas
 │   └── src/
-│       ├── app.js                # Configura Express y monta las rutas
-│       ├── config.js             # Horario, reglas de negocio y variables de entorno
-│       ├── db/                   # schema.sql, conexión y datos de ejemplo (seed)
-│       ├── routes/               # Endpoints (spaces, reservations)
-│       ├── services/             # Lógica de negocio (reservas, disponibilidad, estadísticas)
-│       ├── middleware/           # Manejo de errores y clave de administrador
-│       └── utils/                # Fechas/horas y errores HTTP
-├── frontend/
-│   ├── index.html
-│   ├── css/style.css
-│   └── js/
-│       ├── api.js                # Llamadas a la API (detecta la URL del backend sola)
-│       └── app.js                # Interfaz: tablero, formulario de reserva, historial
-└── docs/                         # Documento del proyecto y diagrama de Gantt
+│       ├── app.js · config.js
+│       ├── db/                   # schema.sql (tablas), conexión (pool y transacciones), datos de ejemplo
+│       ├── routes/               # auth, espacios, reservas, reportes
+│       ├── services/             # lógica: auth, reservas, disponibilidad, notificaciones, reportes, correo
+│       ├── middleware/ · utils/
+├── frontend/                     # index.html · css/ · js/ (api.js, app.js)
+├── render.yaml                   # servicio web en Render; los secretos se configuran en el panel
+├── .node-version                 # versión de Node.js usada en Render
+└── docs/                         # manual de usuario, guía de despliegue, cronograma
 ```
 
-## API REST
+Tablas MySQL: `spaces`, `users`, `sessions`, `account_verifications`, `reservations`, `notifications`.
+
+## API REST (resumen)
+
+Todas requieren sesión salvo `/api/auth/*` y `/api/health`.
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/api/health` | Estado del servidor |
-| POST | `/api/auth/register` | Solicita una cuenta de estudiante y envía código al correo institucional |
-| POST | `/api/auth/verify-email` | Verifica el código de 8 dígitos enviado por correo |
-| POST | `/api/auth/login` · `/api/auth/logout` | Iniciar/cerrar sesión con cookie HttpOnly |
-| GET | `/api/auth/me` | Cuenta de la sesión actual |
-| GET | `/api/spaces?type=` | Lista de espacios (`salon`, `laboratorio`, `sala`) |
-| POST / PUT / DELETE | `/api/spaces` · `/api/spaces/:id` | Crear/editar/dar de baja espacios (solo administrativo) |
-| GET | `/api/availability?date=YYYY-MM-DD` | Espacios con sus bloques horarios del día (libre / ocupado / pasado) |
-| GET | `/api/reservations?date=&spaceId=&responsible=&includeCancelled=true` | Historial de reservas |
-| POST / PUT | `/api/reservations` · `/api/reservations/:id` | Crear o editar reserva propia (administrativo puede gestionar todas) |
-| DELETE | `/api/reservations/:id` | Cancelar reserva propia; administrativo puede cancelar cualquier reserva |
-| GET / POST / DELETE | `/api/admin/users` · `/api/admin/users/:id` | Consultar, crear perfiles de personal y desactivar cuentas (solo administrativo) |
-| GET | `/api/stats` | Resumen del momento: disponibles ahora, totales, espacios más usados |
+| POST | `/api/auth/register` · `/verify-email` · `/login` · `/logout` | Cuentas y sesión |
+| GET | `/api/availability?date=` · `/api/stats` | Disponibilidad por fecha y resumen del momento |
+| GET/POST/PUT/DELETE | `/api/reservations` | Reservas (409 si el horario está ocupado) |
+| GET/POST/PUT/DELETE | `/api/spaces` | Espacios (escritura solo administrativo) |
+| GET/POST/DELETE | `/api/admin/users` · GET `/api/admin/notifications` | Cuentas de personal y bitácora de correos |
+| GET | `/api/reports/summary?from=&to=` · `/api/reports/export` | Reportes y Excel (solo administrativo) |
 
-Las operaciones requieren iniciar sesión. El servidor obtiene nombre y rol de la cuenta autenticada;
-ignora cualquier identidad o perfil enviado desde el navegador. Los estudiantes se registran y verifican
-por correo; profesores y administrativos solo pueden ser creados por un administrativo.
+**Reglas de negocio:** horario 07:00–21:00, hasta 4 horas por reserva, hasta 90 días de anticipación, sin
+reservas en horas pasadas, sin solapes (validado en el servidor con bloqueo de fila: si varias personas reservan
+el mismo bloque a la vez, solo una lo logra), cancelar no borra (queda en el historial).
 
-Errores comunes: `400` datos inválidos · `409` el espacio ya está reservado en ese horario
-(el mensaje indica quién lo tiene) · `422` fecha/hora que ya pasó.
+## Pruebas
 
-## Reglas de negocio implementadas
+```bash
+npm test      # 29 pruebas; usan su propia base "reservas_test" y nunca tocan la real
+```
 
-- Horario de servicio: 07:00 a 21:00, reservas por horas completas, máximo 4 horas por reserva.
-- **Una reserva no puede solaparse con otra del mismo espacio** (validado en el servidor dentro de una transacción).
-- Cada reserva registra responsable, rol (Profesor / Estudiante / Administrativo), motivo y fecha de creación.
-- No se puede reservar en horas pasadas ni con más de 90 días de anticipación.
-- Liberar una reserva no la borra: queda como *cancelada* para conservar la trazabilidad.
-- Una reserva que ya finalizó no se puede liberar.
-- Solo se pueden consultar, editar y cancelar las reservas propias; el perfil administrativo puede gestionar todas.
-- La pantalla se actualiza sola cada 10 segundos, por lo que varios usuarios ven los mismos cambios.
-
-## Estado frente a las épicas del proyecto
-
-| Épica | Estado |
-|---|---|
-| E1 Gestión de Espacios | CRUD en API y panel web administrativo para crear, editar y dar de baja espacios. |
-| E2 Usuarios y Roles | Cuentas con correo institucional verificado, contraseña con hash, sesiones HttpOnly y perfiles asignados con autorización. |
-| E3 Motor de Reservas | Crear, modificar y cancelar; validación de conflictos y permisos por propietario/perfil. |
-| E4 Disponibilidad en Tiempo Real | Hecho (disponibilidad por fecha y refresco automático). |
-| E5 Control y Trazabilidad | Hecho (responsable, rol, motivo, historial con canceladas). |
-| E6 Notificaciones | Pendiente. |
-| E7 Reportes y Analítica | Parcial: `/api/stats` entrega totales y espacios más usados; falta un panel de reportes. |
-
-## Configuración opcional (variables de entorno)
-
-| Variable | Por defecto | Para qué sirve |
-|---|---|---|
-| `PORT` | `3000` | Puerto del servidor |
-| `DB_PATH` | `backend/data/reservas.db` | Ubicación de la base de datos |
-| `EMAIL_DOMAIN` | `amigo.edu.co` | Dominio permitido para cuentas institucionales |
-| `BOOTSTRAP_ADMIN_EMAIL` | — | Correo institucional de la cuenta administrativa inicial |
-| `BOOTSTRAP_ADMIN_PASSWORD` | — | Contraseña inicial (mínimo 12 caracteres); obligatoria junto con el correo |
-| `SMTP_HOST` / `SMTP_PORT` | — / `587` | Servidor y puerto para enviar códigos de verificación |
-| `SMTP_USER` / `SMTP_PASSWORD` | — | Credenciales del servidor SMTP |
-| `SMTP_FROM` | — | Dirección remitente institucional |
-| `SMTP_SECURE` | `false` | `true` si el servidor SMTP requiere TLS implícito |
-| `NODE_ENV` | `development` | En `production` marca las cookies de sesión como `Secure` |
-| `ALLOW_PAST` | `false` | `true` permite reservar en horas pasadas (útil para demos) |
-| `OPEN_HOUR` / `CLOSE_HOUR` | `7` / `21` | Horario de servicio |
-
-Ejemplos: en PowerShell `$env:PORT=4000; npm start` · en Mac/Linux `PORT=4000 npm start`.
+El usuario de MySQL debe poder crear bases (root puede). Cubren login y permisos, reservas y conflictos,
+concurrencia, correos y recordatorios, reportes y Excel.
 
 ## Comandos útiles
 
 ```bash
-npm test        # corre las pruebas automáticas del API
-npm run seed    # borra los datos y recarga los de ejemplo con fechas relativas a HOY
-npm run dev     # modo desarrollo (reinicia el servidor al guardar cambios)
+npm run seed   # borra espacios y reservas y recarga los datos de ejemplo con fechas de HOY (no borra cuentas)
+npm run dev    # reinicia el servidor al guardar cambios
 ```
 
-## Consejos para la presentación
+## Antes de presentar
 
-- Antes de presentar ejecuta `npm run seed` para que las reservas de ejemplo caigan en el día de hoy.
-- **No ejecutes `npm run seed` en producción**: reemplaza los espacios y reservas con datos de demostración.
-- Si presentas fuera de 07:00–21:00, el panel dirá "fuera del horario de servicio". Arranca con
-  `OPEN_HOUR=0 CLOSE_HOUR=24` (en PowerShell: `$env:OPEN_HOUR=0; $env:CLOSE_HOUR=24; npm start`)
-  o cambia los valores en `backend/src/config.js`.
-- Para mostrar el **tiempo real**, abre la página en dos pestañas: reserva en una y verás aparecer
-  el cambio en la otra en unos segundos.
-- Para mostrar el **control de conflictos**, intenta reservar un bloque ya ocupado.
-- Para mostrar la **trazabilidad**, libera una reserva y señala que sigue en el historial como *cancelada*.
+1. `npm run seed` para que las reservas de ejemplo caigan en las fechas actuales.
+2. Si presentas fuera de 07:00–21:00, pon en `.env` `OPEN_HOUR=0` y `CLOSE_HOUR=24`.
+3. Guion sugerido: registrar un estudiante (código por correo) → reservar → ver el correo → mostrar el conflicto
+   al reservar un bloque ocupado → entrar como administrador → reportes y Excel → bitácora de correos.
+
+## Publicarlo en internet
+
+Ver `docs/guia-de-despliegue.md`.
 
 ## Solución de problemas
 
-- **"Sin conexión con el servidor"** en la página: el backend no está corriendo; ejecuta `npm start` en `backend/`.
-- **No se puede registrar**: configura `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` y `SMTP_FROM`, y revisa la conexión desde el servidor.
-- **No aparece administración**: configura `BOOTSTRAP_ADMIN_EMAIL` y `BOOTSTRAP_ADMIN_PASSWORD` antes del primer inicio, o inicia sesión con una cuenta administrativa existente.
-- **Falla `npm install` con better-sqlite3**: usa Node 20 o 22 LTS (`node -v`).
-- **Puerto ocupado**: arranca en otro puerto con la variable `PORT`.
+- **"MySQL no está encendido"** → inicia el servicio de MySQL (o XAMPP). **"Usuario o contraseña incorrectos"** → revisa `.env`.
+- **El registro dice que el correo no está configurado** → completa SMTP o usa `MAIL_SIMULATE=true`.
+- **Puerto ocupado** → cambia `PORT` en `.env`.
+- No incluyas `node_modules` ni `.env` al comprimir o subir el proyecto.

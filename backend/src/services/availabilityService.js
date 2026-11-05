@@ -7,7 +7,7 @@ function createAvailabilityService({ db, config, clock }) {
   //   free  -> libre y reservable
   //   busy  -> ocupado por una reserva activa
   //   past  -> libre pero ya pasó (no reservable)
-  function getAvailability({ date, type } = {}) {
+  async function getAvailability({ date, type } = {}) {
     const now = nowInfo(clock(), config);
     const day = date === undefined ? now.date : date;
     if (!isValidDate(day)) throw new HttpError(400, 'La fecha debe tener formato YYYY-MM-DD', 'VALIDATION');
@@ -19,15 +19,14 @@ function createAvailabilityService({ db, config, clock }) {
     const params = [];
     if (type) { spaceSql += ' AND type = ?'; params.push(type); }
     spaceSql += " ORDER BY CASE type WHEN 'salon' THEN 1 WHEN 'laboratorio' THEN 2 ELSE 3 END, name";
-    const spaces = db.prepare(spaceSql).all(...params);
+    const spaces = await db.all(spaceSql, params);
 
-    const resRows = db
-      .prepare(`
-        SELECT r.*, s.name AS space_name, s.type AS space_type
-        FROM reservations r JOIN spaces s ON s.id = r.space_id
-        WHERE r.date = ? AND r.status = 'activa'
-      `)
-      .all(day);
+    const resRows = await db.all(
+      `SELECT r.*, s.name AS space_name, s.type AS space_type
+       FROM reservations r JOIN spaces s ON s.id = r.space_id
+       WHERE r.date = ? AND r.status = 'activa'`,
+      [day]
+    );
     const bySpace = new Map();
     resRows.forEach((r) => {
       if (!bySpace.has(r.space_id)) bySpace.set(r.space_id, []);

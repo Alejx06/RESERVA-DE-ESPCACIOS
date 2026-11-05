@@ -1,10 +1,7 @@
 const express = require('express');
 const { HttpError } = require('../utils/errors');
+const { asyncHandler: asyncRoute } = require('../utils/asyncHandler');
 const { sessionCookie } = require('../services/authService');
-
-function asyncRoute(handler) {
-  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
-}
 
 function authRouter({ auth, requireAuth, config }) {
   const router = express.Router();
@@ -77,35 +74,38 @@ function authRouter({ auth, requireAuth, config }) {
     res.json({ user: session.user, expiresAt: session.expiresAt });
   }));
 
-  router.post('/logout', requireAuth, (req, res) => {
-    auth.logout(req.sessionToken);
+  router.post('/logout', requireAuth, asyncRoute(async (req, res) => {
+    await auth.logout(req.sessionToken);
     res.set('Set-Cookie', sessionCookie('', config, 0));
     res.status(204).end();
-  });
+  }));
 
   router.get('/me', requireAuth, (req, res) => res.json({ user: req.user }));
   return router;
 }
 
-function adminRouter({ auth, spaces, requireAuth, requireAdmin }) {
+function adminRouter({ auth, spaces, notifications, requireAuth, requireAdmin }) {
   const router = express.Router();
   router.use(requireAuth, requireAdmin);
 
-  router.get('/users', (req, res) => res.json(auth.listUsers()));
+  router.get('/users', asyncRoute(async (req, res) => res.json(await auth.listUsers())));
   router.post('/users', asyncRoute(async (req, res) => {
     const user = await auth.createStaff(req.body || {});
     res.status(201).json({ user });
   }));
-  router.delete('/users/:id', (req, res) => {
+  router.delete('/users/:id', asyncRoute(async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) throw new HttpError(400, 'El id debe ser un número válido', 'VALIDATION');
-    auth.deactivateUser(id, req.user.id);
+    await auth.deactivateUser(id, req.user.id);
     res.status(204).end();
-  });
+  }));
 
-  router.get('/spaces', (req, res) => {
-    res.json(spaces.list({ includeInactive: true }));
-  });
+  router.get('/spaces', asyncRoute(async (req, res) => {
+    res.json(await spaces.list({ includeInactive: true }));
+  }));
+  router.get('/notifications', asyncRoute(async (req, res) => {
+    res.json(await notifications.list(req.query.limit));
+  }));
   return router;
 }
 

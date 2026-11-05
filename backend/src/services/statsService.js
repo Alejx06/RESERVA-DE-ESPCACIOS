@@ -1,38 +1,36 @@
 const { nowInfo } = require('../utils/time');
 
 function createStatsService({ db, config, clock }) {
-  // Resumen "ahora mismo" para el panel principal + datos base para reportes (Épica E7).
-  function getStats() {
+  // Resumen "ahora mismo" para el panel principal.
+  async function getStats() {
     const now = nowInfo(clock(), config);
 
-    const spaces = db.prepare('SELECT id, type FROM spaces WHERE active = 1').all();
+    const spaces = await db.all('SELECT id, type FROM spaces WHERE active = 1');
     const byType = { salon: 0, laboratorio: 0, sala: 0 };
     spaces.forEach((s) => { byType[s.type] += 1; });
 
-    const occupiedIds = now.isOpen
-      ? db
-          .prepare(`
-            SELECT DISTINCT space_id FROM reservations
-            WHERE date = ? AND status = 'activa' AND start_hour <= ? AND end_hour > ?
-          `)
-          .all(now.date, now.hour, now.hour)
-          .map((r) => r.space_id)
-      : [];
-    const activeIds = new Set(spaces.map((s) => s.id));
-    const occupiedNow = occupiedIds.filter((id) => activeIds.has(id)).length;
+    let occupiedNow = 0;
+    if (now.isOpen) {
+      const row = await db.get(
+        `SELECT COUNT(DISTINCT r.space_id) AS n
+         FROM reservations r JOIN spaces s ON s.id = r.space_id AND s.active = 1
+         WHERE r.date = ? AND r.status = 'activa' AND r.start_hour <= ? AND r.end_hour > ?`,
+        [now.date, now.hour, now.hour]
+      );
+      occupiedNow = Number(row.n);
+    }
 
-    const reservationsToday = db
-      .prepare("SELECT COUNT(*) AS n FROM reservations WHERE date = ? AND status = 'activa'")
-      .get(now.date).n;
+    const today = await db.get(
+      "SELECT COUNT(*) AS n FROM reservations WHERE date = ? AND status = 'activa'",
+      [now.date]
+    );
 
-    const topSpaces = db
-      .prepare(`
-        SELECT s.name AS name, COUNT(*) AS reservations, SUM(r.end_hour - r.start_hour) AS hours
-        FROM reservations r JOIN spaces s ON s.id = r.space_id
-        WHERE r.status = 'activa' AND s.active = 1
-        GROUP BY s.id ORDER BY hours DESC, s.name LIMIT 5
-      `)
-      .all();
+    const top = await db.all(
+      `SELECT s.name AS name, COUNT(*) AS reservations, SUM(r.end_hour - r.start_hour) AS hours
+       FROM reservations r JOIN spaces s ON s.id = r.space_id
+       WHERE r.status = 'activa' AND s.active = 1
+       GROUP BY s.id, s.name ORDER BY hours DESC, s.name LIMIT 5`
+    );
 
     return {
       now,
@@ -42,8 +40,9 @@ function createStatsService({ db, config, clock }) {
       byType,
       occupiedNow,
       availableNow: now.isOpen ? spaces.length - occupiedNow : 0,
-      reservationsToday,
-      topSpaces,
+      reservationsToday: Number(today.n),
+      // SUM() en MySQL llega como texto: se convierte a número
+      topSpaces: top.map((t) => ({ name: t.name, reservations: Number(t.reservations), hours: Number(t.hours) })),
     };
   }
 

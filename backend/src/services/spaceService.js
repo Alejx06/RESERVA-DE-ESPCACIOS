@@ -2,8 +2,6 @@ const { HttpError } = require('../utils/errors');
 const { toSpace } = require('./mappers');
 
 function createSpaceService({ db, config, clock }) {
-  const { formatDate } = require('../utils/time');
-
   function validate(input, { partial = false } = {}) {
     const out = {};
     const has = (k) => input[k] !== undefined;
@@ -32,7 +30,7 @@ function createSpaceService({ db, config, clock }) {
     return out;
   }
 
-  function list({ type, includeInactive } = {}) {
+  async function list({ type, includeInactive } = {}) {
     if (type !== undefined && !config.SPACE_TYPES.includes(type)) {
       throw new HttpError(400, `El tipo debe ser uno de: ${config.SPACE_TYPES.join(', ')}`, 'VALIDATION');
     }
@@ -40,52 +38,50 @@ function createSpaceService({ db, config, clock }) {
     const params = [];
     if (!includeInactive) sql += ' AND active = 1';
     if (type) { sql += ' AND type = ?'; params.push(type); }
-    sql += ' ORDER BY CASE type WHEN \'salon\' THEN 1 WHEN \'laboratorio\' THEN 2 ELSE 3 END, name';
-    return db.prepare(sql).all(...params).map((r) => toSpace(r, config));
+    sql += " ORDER BY CASE type WHEN 'salon' THEN 1 WHEN 'laboratorio' THEN 2 ELSE 3 END, name";
+    return (await db.all(sql, params)).map((r) => toSpace(r, config));
   }
 
-  function getById(id) {
-    const row = db.prepare('SELECT * FROM spaces WHERE id = ?').get(id);
+  async function getById(id) {
+    const row = await db.get('SELECT * FROM spaces WHERE id = ?', [id]);
     if (!row) throw new HttpError(404, 'El espacio no existe', 'NOT_FOUND');
     return toSpace(row, config);
   }
 
-  function assertUniqueName(name, exceptId) {
-    const dup = db.prepare('SELECT id FROM spaces WHERE name = ? COLLATE NOCASE AND id != ?').get(name, exceptId || -1);
+  // La columna name es UNIQUE con collation insensible a mayúsculas y tildes ("Salon 1" = "Salón 1").
+  async function assertUniqueName(name, exceptId) {
+    const dup = await db.get('SELECT id FROM spaces WHERE name = ? AND id <> ?', [name, exceptId || 0]);
     if (dup) throw new HttpError(409, 'Ya existe un espacio con ese nombre', 'DUPLICATE');
   }
 
-  function create(input) {
+  async function create(input) {
     const data = validate(input);
-    assertUniqueName(data.name);
-    const info = db
-      .prepare('INSERT INTO spaces (name, type, capacity, location) VALUES (?, ?, ?, ?)')
-      .run(data.name, data.type, data.capacity, data.location);
-    return getById(info.lastInsertRowid);
+    await assertUniqueName(data.name);
+    const res = await db.run('INSERT INTO spaces (name, type, capacity, location) VALUES (?, ?, ?, ?)', [
+      data.name, data.type, data.capacity, data.location,
+    ]);
+    return getById(res.insertId);
   }
 
-  function update(id, input) {
-    const current = getById(id);
+  async function update(id, input) {
+    const current = await getById(id);
     const data = validate(input, { partial: true });
     if (Object.keys(data).length === 0) throw new HttpError(400, 'No se enviaron campos para actualizar', 'VALIDATION');
-    if (data.name) assertUniqueName(data.name, id);
+    if (data.name) await assertUniqueName(data.name, id);
     const merged = { ...current, ...data };
-    db.prepare('UPDATE spaces SET name = ?, type = ?, capacity = ?, location = ? WHERE id = ?')
-      .run(merged.name, merged.type, merged.capacity, merged.location, id);
+    await db.run('UPDATE spaces SET name = ?, type = ?, capacity = ?, location = ? WHERE id = ?', [
+      merged.name, merged.type, merged.capacity, merged.location, id,
+    ]);
     return getById(id);
   }
 
-  // Baja lógica: el espacio deja de aparecer, pero se conserva el historial de sus reservas.
-  function remove(id) {
-    getById(id);
-    const today = formatDate(clock());
-    const pending = db
-      .prepare("SELECT COUNT(*) AS n FROM reservations WHERE space_id = ? AND status = 'activa' AND date >= ?")
-      .get(id, today);
-    if (pending.n > 0) {
-      throw new HttpError(409, 'El espacio tiene reservas activas pendientes; cancélalas antes de darlo de baja', 'HAS_RESERVATIONS');
-    }
-    db.prepare('UPDATE spaces SET active = 0 WHERE id = ?').run(id);
+  // Lock the same row used by reservation creation so a booking cannot race with deactivation.
+  async function remove(id) {
+    await db.transaction(async (tx) => {
+      const space = await tx.get('SELECT id FROM spaces WHERE id = ? FOR UPDATE', [id]);
+      if (!space) throw new HttpError(404, 'El espacio no existe', 'NOT_FOUND');
+      await tx.run('UPDATE spaces SET active = 0 WHERE id = ?', [id]);
+    });
   }
 
   return { list, getById, create, update, remove };

@@ -42,6 +42,19 @@
     toastTimer = setTimeout(() => { el.className = 'toast'; }, 3200);
   }
 
+  function confirmInPage(message) {
+    const dialog = $('confirmDialog');
+    $('confirmMessage').textContent = message;
+    return new Promise((resolve) => {
+      const onClose = () => {
+        dialog.removeEventListener('close', onClose);
+        resolve(dialog.returnValue === 'confirm');
+      };
+      dialog.addEventListener('close', onClose);
+      dialog.showModal();
+    });
+  }
+
   function setOnline(online) {
     const el = $('conn');
     el.className = 'conn ' + (online ? 'online' : 'offline');
@@ -77,6 +90,7 @@
       state.reservations = reservations;
       setOnline(true);
       renderAll();
+      if (state.user && state.user.role === 'Administrativo') refreshNotifications().catch(() => {});
     } catch (err) {
       if (err.status === 401) {
         state.user = null;
@@ -432,11 +446,11 @@
     });
     $('adminSpaces').querySelectorAll('[data-deactivate-space]').forEach((button) => {
       button.addEventListener('click', async () => {
-        if (!window.confirm('¿Dar de baja este espacio? Se conservará su historial.')) return;
+        if (!(await confirmInPage('Este espacio dejará de aparecer para nuevas reservas. Las reservas existentes y su historial se conservarán. ¿Deseas continuar?'))) return;
         try {
           await Api.deactivateSpace(Number(button.dataset.deactivateSpace));
           await Promise.all([refreshAdmin(), loadAll()]);
-          toast('Espacio dado de baja');
+          toast('Espacio dado de baja. Sus reservas existentes se conservaron.');
         } catch (err) {
           toast(err.message, true);
         }
@@ -444,7 +458,7 @@
     });
     $('adminUsers').querySelectorAll('[data-deactivate-user]').forEach((button) => {
       button.addEventListener('click', async () => {
-        if (!window.confirm('¿Desactivar esta cuenta? Se cerrarán sus sesiones activas.')) return;
+        if (!(await confirmInPage('¿Desactivar esta cuenta? Se cerrarán sus sesiones activas.'))) return;
         try {
           await Api.deactivateUser(Number(button.dataset.deactivateUser));
           await refreshAdmin();
@@ -455,6 +469,80 @@
       });
     });
   }
+
+  // ---------- Notificaciones (administración) ----------
+  const NOTIFICATION_LABELS = { confirmacion: 'Confirmación', modificacion: 'Modificación', cancelacion: 'Cancelación', recordatorio: 'Recordatorio' };
+  const NOTIFICATION_STATES = { enviado: ['ok', 'Enviado'], simulado: ['done', 'Simulado'], omitido: ['warn', 'Sin enviar'], fallido: ['cancelled', 'Falló'] };
+
+  async function refreshNotifications() {
+    const items = await Api.adminNotifications();
+    $('adminNotifications').innerHTML = items.length ? items.slice(0, 10).map((n) => {
+      const [cls, label] = NOTIFICATION_STATES[n.status] || ['done', n.status];
+      const when = new Date(n.createdAt).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      return `<article class="admin-item">
+        <div><strong>${esc(NOTIFICATION_LABELS[n.type] || n.type)} · ${esc(n.subject)}</strong><span>${esc(n.recipient)} · ${esc(when)}${n.error ? ' · ' + esc(n.error) : ''}</span></div>
+        <span class="state-pill ${cls}">${label}</span>
+      </article>`;
+    }).join('') : '<div class="empty">Aún no se han enviado notificaciones.</div>';
+  }
+
+  // ---------- Reportes (administración) ----------
+  const bar = (label, text, pct, extra = '') => `
+    <div class="bar-row">
+      <span class="bar-label" title="${esc(label)}">${esc(label)}</span>
+      <span class="bar-track"><span class="bar-fill ${extra}" style="width:${Math.max(0, Math.min(100, pct))}%"></span></span>
+      <span class="bar-value">${esc(text)}</span>
+    </div>`;
+  const maxOf = (items, key) => Math.max(1, ...items.map((i) => i[key]));
+
+  function renderReport(r) {
+    const t = r.totals;
+    const kpi = (value, label) => `<div class="kpi"><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
+    $('reportKpis').innerHTML = [
+      kpi(t.reservations, 'reservas activas'),
+      kpi(t.hours + ' h', 'horas reservadas'),
+      kpi(t.occupancyPct + '%', 'ocupación general'),
+      kpi(t.cancelled, 'canceladas (' + t.cancellationRate + '%)'),
+      kpi(t.spacesUsed + '/' + t.totalSpaces, 'espacios utilizados'),
+      kpi(t.peakHour === null ? '—' : hourLabel(t.peakHour), 'hora de mayor demanda'),
+    ].join('');
+    $('chartSpaces').innerHTML = r.bySpace.map((s) => bar(`${s.name}${s.active ? '' : ' (inactivo)'}`, `${s.occupancyPct}% · ${s.hours} h`, s.occupancyPct, s.type)).join('') || '<div class="empty">Sin espacios.</div>';
+    $('chartTypes').innerHTML = r.byType.map((s) => bar(`${s.label} (${s.spaces})`, `${s.occupancyPct}% · ${s.hours} h`, s.occupancyPct, s.type)).join('');
+    const wdMax = maxOf(r.byWeekday, 'reservations');
+    $('chartWeekday').innerHTML = r.byWeekday.map((d) => bar(d.name, `${d.reservations}`, (d.reservations / wdMax) * 100)).join('');
+    const hMax = maxOf(r.byHour, 'reservations');
+    $('chartHours').innerHTML = r.byHour.map((h) => bar(hourLabel(h.hour), `${h.reservations}`, (h.reservations / hMax) * 100)).join('');
+    const roleMax = maxOf(r.byRole, 'hours');
+    $('chartRoles').innerHTML = r.byRole.map((x) => bar(x.role, `${x.hours} h · ${x.reservations} reservas`, (x.hours / roleMax) * 100)).join('');
+    $('topUsers').innerHTML = r.topUsers.length ? `<table class="mini-table"><tbody>${r.topUsers.map((u) => `<tr><td>${esc(u.name)}<small>${esc(u.role)}</small></td><td>${u.reservations} reservas</td><td><b>${u.hours} h</b></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Sin reservas en el rango.</div>';
+    $('reportNote').textContent = `Del ${r.from} al ${r.to} (${r.days} días). Incluye espacios activos e inactivos y sus reservas conservadas. Ocupación = horas reservadas ÷ horas disponibles (${hourLabel(state.stats.openHour)} a ${hourLabel(state.stats.closeHour)}, todos los días del rango).`;
+    $('reportBody').hidden = false;
+  }
+
+  async function loadReport() {
+    $('reportFeedback').textContent = '';
+    const from = $('reportFrom').value;
+    const to = $('reportTo').value;
+    $('exportReport').href = Api.reportExportUrl(from, to);
+    try {
+      renderReport(await Api.reportSummary(from, to));
+    } catch (err) {
+      $('reportBody').hidden = true;
+      $('reportFeedback').textContent = err.message;
+    }
+  }
+
+  function initReports() {
+    const [y, m] = state.date.split('-').map(Number);
+    $('reportFrom').value = `${y}-${pad(m)}-01`;
+    $('reportTo').value = `${y}-${pad(m)}-${pad(new Date(y, m, 0).getDate())}`;
+    return loadReport();
+  }
+
+  $('reportForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    loadReport();
+  });
 
   // ---------- Eventos ----------
   $('tabs').addEventListener('click', (e) => {
@@ -513,6 +601,7 @@
     if (user.role === 'Administrativo') {
       try {
         await refreshAdmin();
+        await initReports();
       } catch (err) {
         toast(err.message, true);
       }
@@ -602,10 +691,20 @@
     $('verificationFeedback').textContent = '';
     try {
       await Api.resendVerification({ email: $('verificationEmail').value });
-      $('verificationFeedback').textContent = 'Si hay una cuenta pendiente, enviaremos otro código.';
+      $('verificationFeedback').textContent = 'Si tu cuenta aún no está activada, enviamos un código. Revisa Recibidos y Spam. Si ya la activaste, vuelve a Iniciar sesión.';
     } catch (err) {
       $('verificationFeedback').textContent = err.message;
     }
+  });
+
+  $('backToLogin').addEventListener('click', () => {
+    document.querySelectorAll('[data-auth-view]').forEach((tab) => {
+      tab.classList.toggle('active', tab.dataset.authView === 'login');
+    });
+    $('loginForm').hidden = false;
+    $('registerForm').hidden = true;
+    $('verificationForm').hidden = true;
+    $('loginFeedback').textContent = '';
   });
 
   $('logoutButton').addEventListener('click', async () => {

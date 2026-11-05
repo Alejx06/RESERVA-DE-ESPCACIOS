@@ -78,5 +78,8 @@ const Api = (() => {
     adminUsers: () => request('/admin/users'),
     createStaffUser: (body) => request('/admin/users', { method: 'POST', body }),
     deactivateUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
+    adminNotifications: () => request('/admin/notifications'),
+    reportSummary: (from, to) => request('/reports/summary' + qs({ from, to })),
+    reportExportUrl: (from, to) => '/api/reports/export' + qs({ from, to }),
   };
 })();

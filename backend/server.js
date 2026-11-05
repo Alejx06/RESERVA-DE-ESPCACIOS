@@ -1,44 +1,61 @@
 const config = require('./src/config');
-const { openDatabase } = require('./src/db/database');
+const { createDatabase } = require('./src/db/database');
 const { seedIfEmpty } = require('./src/db/seed');
 const { bootstrapAdmin } = require('./src/services/authService');
 const { createApp } = require('./src/app');
 
-async function start() {
-  const db = openDatabase(config.DB_PATH);
-  if (seedIfEmpty(db, undefined, { includeDemoData: config.NODE_ENV !== 'production' })) {
-    console.log('Base de datos vacía: se cargaron espacios y reservas de ejemplo.');
+function explainDbError(err) {
+  const { host, port, user, database } = config.DB;
+  console.error('\n  No se pudo conectar con MySQL: ' + (err.message || err.code));
+  if (err.code === 'ECONNREFUSED') {
+    console.error(`  -> MySQL no está encendido en ${host}:${port}. Inicia el servicio (o XAMPP/MySQL Workbench) y vuelve a intentar.`);
+  } else if (err.code === 'ER_ACCESS_DENIED_ERROR') {
+    console.error(`  -> Usuario o contraseña incorrectos (usuario "${user}"). Revisa DB_USER y DB_PASSWORD en backend/.env`);
+  } else if (err.code === 'ER_BAD_DB_ERROR') {
+    console.error(`  -> La base "${database}" no existe y el usuario no tiene permiso para crearla. Créala a mano: CREATE DATABASE ${database};`);
+  } else {
+    console.error('  -> Revisa los datos de conexión en backend/.env (copia .env.example si aún no existe).');
   }
-  if (await bootstrapAdmin(db, config)) console.log('Cuenta administrativa inicial creada desde variables de entorno.');
-  const activeAdmins = db.prepare("SELECT COUNT(*) AS total FROM users WHERE role = 'Administrativo' AND active = 1").get().total;
-  if (!config.BOOTSTRAP_ADMIN_EMAIL && activeAdmins === 0) {
-    console.warn('No se configuró BOOTSTRAP_ADMIN_EMAIL/PASSWORD. Configúralos para habilitar la gestión administrativa.');
-  }
-  if (!config.SMTP_HOST || !config.SMTP_USER || !config.SMTP_PASSWORD || !config.SMTP_FROM) {
-    console.warn('SMTP incompleto: no se podrán enviar códigos para el registro de estudiantes.');
+  console.error('');
+}
+
+async function main() {
+  let db;
+  try {
+    db = await createDatabase(config.DB);
+    await db.initSchema();
+    if (await seedIfEmpty(db, undefined, { includeDemoData: config.NODE_ENV !== 'production' })) {
+      console.log('Base de datos vacía: se cargaron espacios y reservas de ejemplo.');
+    }
+    if (await bootstrapAdmin(db, config)) {
+      console.log(`Cuenta administrativa inicial creada: ${config.BOOTSTRAP_ADMIN_EMAIL}`);
+    }
+  } catch (err) {
+    explainDbError(err);
+    process.exit(1);
   }
 
   const app = createApp(db);
+  app.locals.services.notifications.start(); // recordatorios automáticos
   const server = app.listen(config.PORT, () => {
+    const mail = app.locals.services.notifications && (config.SMTP_HOST ? `SMTP ${config.SMTP_HOST}` : (config.MAIL_SIMULATE ? 'simulado (consola)' : 'NO configurado'));
     console.log('');
-    console.log('  Sistema de Reservas de Espacios');
+    console.log(`  ${config.APP_NAME}`);
     console.log(`  Aplicación web : http://localhost:${config.PORT}`);
-    console.log(`  API REST       : http://localhost:${config.PORT}/api`);
-    console.log(`  Base de datos  : ${config.DB_PATH}`);
+    console.log(`  Base de datos  : MySQL "${config.DB.database}" en ${config.DB.host}:${config.DB.port}`);
+    console.log(`  Correo         : ${mail}`);
     console.log('');
   });
 
-  function shutdown() {
-    server.close(() => {
-      db.close();
+  const shutdown = () => {
+    app.locals.services.notifications.stop();
+    server.close(async () => {
+      await db.close();
       process.exit(0);
     });
-  }
+  };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
 
-start().catch((error) => {
-  console.error('No se pudo iniciar el servidor:', error.message);
-  process.exitCode = 1;
-});
+main();

@@ -36,11 +36,11 @@
       <label class="auth-field" for="registerEmail">Correo institucional
         <input id="registerEmail" type="email" autocomplete="email" required>
       </label>
-      <label class="auth-field" for="registerPassword">Contraseña (mínimo 12 caracteres)
-        <input id="registerPassword" type="password" autocomplete="new-password" minlength="12" required>
+      <label class="auth-field" for="registerPassword">Contraseña (mínimo 8 caracteres)
+        <input id="registerPassword" type="password" autocomplete="new-password" minlength="8" required>
       </label>
       <label class="auth-field" for="registerConfirm">Confirmar contraseña
-        <input id="registerConfirm" type="password" autocomplete="new-password" minlength="12" required>
+        <input id="registerConfirm" type="password" autocomplete="new-password" minlength="8" required>
       </label>
       <p class="auth-feedback" id="registerFeedback" role="alert"></p>
       <button class="primary auth-submit" type="submit">Crear cuenta de estudiante</button>
@@ -56,6 +56,7 @@
       <p class="auth-feedback" id="verificationFeedback" role="alert"></p>
       <button class="primary auth-submit" type="submit">Verificar correo</button>
       <button class="ghost auth-submit" id="resendVerification" type="button">Enviar otro código</button>
+      <button class="ghost auth-submit" id="backToLogin" type="button">Volver a iniciar sesión</button>
     </form>
   </div>
 </section>
@@ -110,6 +111,31 @@
 
 <main>
   <section class="admin-section" id="adminSection" hidden>
+    <div class="history-head"><h2>Reportes de ocupación</h2><p>Indicadores de uso de los espacios en un rango de fechas.</p></div>
+    <form id="reportForm" class="admin-form">
+      <div class="field-row">
+        <label class="field">Desde<input id="reportFrom" type="date" required></label>
+        <label class="field">Hasta<input id="reportTo" type="date" required></label>
+      </div>
+      <div class="panel-actions">
+        <button class="primary" type="submit">Ver reporte</button>
+        <a class="button-link" id="exportReport" href="/api/reports/export">Descargar Excel</a>
+      </div>
+      <p class="form-error" id="reportFeedback" role="alert"></p>
+    </form>
+    <div id="reportBody" hidden>
+      <div class="kpis" id="reportKpis"></div>
+      <div class="report-grid">
+        <div class="report-card"><h3>Ocupación por espacio</h3><div id="chartSpaces"></div></div>
+        <div class="report-card"><h3>Ocupación por tipo de espacio</h3><div id="chartTypes"></div></div>
+        <div class="report-card"><h3>Reservas por día de la semana</h3><div id="chartWeekday"></div></div>
+        <div class="report-card"><h3>Horas de mayor demanda</h3><div id="chartHours"></div></div>
+        <div class="report-card"><h3>Horas reservadas por perfil</h3><div id="chartRoles"></div></div>
+        <div class="report-card"><h3>Personas con más horas reservadas</h3><div id="topUsers"></div></div>
+      </div>
+      <p class="report-note" id="reportNote"></p>
+    </div>
+
     <div class="history-head"><h2>Administración de espacios</h2><p>Solo visible para cuentas administrativas.</p></div>
     <form id="spaceForm" class="admin-form">
       <h3 id="spaceFormTitle">Registrar espacio</h3>
@@ -130,12 +156,15 @@
         <label class="field">Nombre completo<input id="staffName" maxlength="80" required></label>
         <label class="field">Correo institucional<input id="staffEmail" type="email" required></label>
         <label class="field">Perfil<select id="staffRole"><option>Profesor</option><option>Administrativo</option></select></label>
-        <label class="field">Contraseña inicial (mínimo 12 caracteres)<input id="staffPassword" type="password" minlength="12" required></label>
+        <label class="field">Contraseña inicial (mínimo 8 caracteres)<input id="staffPassword" type="password" minlength="8" required></label>
       </div>
       <button class="primary" type="submit">Crear cuenta de personal</button>
       <p class="form-error" id="staffFeedback" role="alert"></p>
     </form>
     <div class="admin-list" id="adminUsers"></div>
+
+    <div class="history-head"><h2>Notificaciones por correo</h2><p>Últimos mensajes: confirmaciones, cambios, cancelaciones y recordatorios.</p></div>
+    <div class="admin-list" id="adminNotifications"></div>
   </section>
 
   <div class="board" id="board"></div>
@@ -154,6 +183,16 @@
 </main>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmTitle">
+  <form method="dialog">
+    <h2 id="confirmTitle">Confirmar acción</h2>
+    <p id="confirmMessage"></p>
+    <div class="panel-actions">
+      <button class="ghost" type="submit" value="cancel">Volver</button>
+      <button class="primary" type="submit" value="confirm">Confirmar</button>
+    </div>
+  </form>
+</dialog>
 
 <script src="js/api.js"></script>
 <script src="js/app.js"></script>

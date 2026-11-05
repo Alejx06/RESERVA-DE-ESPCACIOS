@@ -2,12 +2,16 @@ const { HttpError } = require('../utils/errors');
 const { isValidDate, daysBetween, nowInfo, hh } = require('../utils/time');
 const { toReservation } = require('./mappers');
 
-function createReservationService({ db, config, clock }) {
+function createReservationService({ db, config, clock, notifier }) {
   const BASE_SELECT = `
     SELECT r.*, s.name AS space_name, s.type AS space_type
     FROM reservations r
     JOIN spaces s ON s.id = r.space_id
   `;
+
+  const notify = (type, reservationId) => {
+    if (notifier) notifier.reservationEvent(type, reservationId);
+  };
 
   function validateCreate(input, user) {
     const spaceId = Number(input.spaceId);
@@ -27,6 +31,7 @@ function createReservationService({ db, config, clock }) {
       throw new HttpError(400, `Una reserva no puede superar ${config.MAX_HOURS_PER_RESERVATION} horas`, 'VALIDATION');
     }
 
+    // El responsable y su rol salen de la sesión (no se pueden falsear desde el navegador).
     const responsibleName = user.fullName;
     const role = user.role;
     let purpose = typeof input.purpose === 'string' ? input.purpose.trim() : '';
@@ -42,9 +47,9 @@ function createReservationService({ db, config, clock }) {
     }
   }
 
-  function getById(id, user) {
+  async function getById(id, user) {
     const now = nowInfo(clock(), config);
-    const row = db.prepare(`${BASE_SELECT} WHERE r.id = ?`).get(id);
+    const row = await db.get(`${BASE_SELECT} WHERE r.id = ?`, [id]);
     if (!row) throw new HttpError(404, 'La reserva no existe', 'NOT_FOUND');
     if (user) assertOwner(row, user);
     return toReservation(row, now);
@@ -59,45 +64,47 @@ function createReservationService({ db, config, clock }) {
     }
   }
 
-  function create(input, user) {
+  const conflictError = (space, conflict) => new HttpError(
+    409,
+    `${space.name} ya está reservado de ${hh(conflict.start_hour)} a ${hh(conflict.end_hour)} por ${conflict.responsible_name}`,
+    'CONFLICT'
+  );
+
+  async function create(input, user) {
     const data = validateCreate(input, user);
     const now = nowInfo(clock(), config);
-
-    const space = db.prepare('SELECT * FROM spaces WHERE id = ? AND active = 1').get(data.spaceId);
-    if (!space) throw new HttpError(404, 'El espacio no existe o no está disponible', 'NOT_FOUND');
     validateDateLimits(data, now);
 
-    // La comprobación de conflicto y el INSERT van en una sola transacción (atómico).
-    const run = db.transaction(() => {
-      const conflict = db
-        .prepare(`
-          SELECT * FROM reservations
-          WHERE space_id = ? AND date = ? AND status = 'activa'
-            AND start_hour < ? AND end_hour > ?
-          LIMIT 1
-        `)
-        .get(data.spaceId, data.date, data.endHour, data.startHour);
-      if (conflict) {
-        throw new HttpError(
-          409,
-          `${space.name} ya está reservado de ${hh(conflict.start_hour)} a ${hh(conflict.end_hour)} por ${conflict.responsible_name}`,
-          'CONFLICT'
-        );
-      }
-      return db
-        .prepare(`
-          INSERT INTO reservations (space_id, user_id, date, start_hour, end_hour, responsible_name, role, purpose, status, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'activa', ?)
-        `)
-        .run(data.spaceId, user.id, data.date, data.startHour, data.endHour, data.responsibleName, data.role, data.purpose, clock().toISOString())
-        .lastInsertRowid;
+    // Transacción: se bloquea la fila del espacio (FOR UPDATE), así dos personas que reserven el mismo
+    // espacio al mismo tiempo se atienden una detrás de otra y la segunda ve el conflicto.
+    const newId = await db.transaction(async (tx) => {
+      const space = await tx.get('SELECT * FROM spaces WHERE id = ? AND active = 1 FOR UPDATE', [data.spaceId]);
+      if (!space) throw new HttpError(404, 'El espacio no existe o no está disponible', 'NOT_FOUND');
+
+      const conflict = await tx.get(
+        `SELECT * FROM reservations
+         WHERE space_id = ? AND date = ? AND status = 'activa'
+           AND start_hour < ? AND end_hour > ?
+         LIMIT 1`,
+        [data.spaceId, data.date, data.endHour, data.startHour]
+      );
+      if (conflict) throw conflictError(space, conflict);
+
+      const res = await tx.run(
+        `INSERT INTO reservations (space_id, user_id, date, start_hour, end_hour, responsible_name, role, purpose, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'activa', ?)`,
+        [data.spaceId, user.id, data.date, data.startHour, data.endHour, data.responsibleName, data.role, data.purpose, clock().toISOString()]
+      );
+      return res.insertId;
     });
 
-    return getById(run(), user);
+    const reservation = await getById(newId, user);
+    notify('confirmacion', newId);
+    return reservation;
   }
 
-  function update(id, input, user) {
-    const currentRow = db.prepare(`${BASE_SELECT} WHERE r.id = ?`).get(id);
+  async function update(id, input, user) {
+    const currentRow = await db.get(`${BASE_SELECT} WHERE r.id = ?`, [id]);
     if (!currentRow) throw new HttpError(404, 'La reserva no existe', 'NOT_FOUND');
     assertOwner(currentRow, user);
     const current = toReservation(currentRow, nowInfo(clock(), config));
@@ -107,54 +114,57 @@ function createReservationService({ db, config, clock }) {
       throw new HttpError(400, 'No se enviaron campos para actualizar', 'VALIDATION');
     }
 
+    // Al modificar, el responsable y el rol siguen siendo los de la reserva original.
+    const owner = { fullName: currentRow.responsible_name, role: currentRow.role };
     const data = validateCreate({
       spaceId: input.spaceId === undefined ? current.spaceId : input.spaceId,
       date: input.date === undefined ? current.date : input.date,
       startHour: input.startHour === undefined ? current.startHour : input.startHour,
       endHour: input.endHour === undefined ? current.endHour : input.endHour,
       purpose: input.purpose === undefined ? current.purpose : input.purpose,
-    }, user);
-    const now = nowInfo(clock(), config);
-    validateDateLimits(data, now);
-    const space = db.prepare('SELECT * FROM spaces WHERE id = ? AND active = 1').get(data.spaceId);
-    if (!space) throw new HttpError(404, 'El espacio no existe o no está disponible', 'NOT_FOUND');
+    }, owner);
+    validateDateLimits(data, nowInfo(clock(), config));
 
-    const run = db.transaction(() => {
-      const conflict = db.prepare(`
-        SELECT * FROM reservations
-        WHERE space_id = ? AND date = ? AND status = 'activa' AND id != ?
-          AND start_hour < ? AND end_hour > ?
-        LIMIT 1
-      `).get(data.spaceId, data.date, id, data.endHour, data.startHour);
-      if (conflict) {
-        throw new HttpError(
-          409,
-          `${space.name} ya está reservado de ${hh(conflict.start_hour)} a ${hh(conflict.end_hour)} por ${conflict.responsible_name}`,
-          'CONFLICT'
-        );
-      }
-      db.prepare(`
-        UPDATE reservations
-        SET space_id = ?, date = ?, start_hour = ?, end_hour = ?, purpose = ?
-        WHERE id = ? AND status = 'activa'
-      `).run(data.spaceId, data.date, data.startHour, data.endHour, data.purpose, id);
+    await db.transaction(async (tx) => {
+      const space = await tx.get('SELECT * FROM spaces WHERE id = ? AND active = 1 FOR UPDATE', [data.spaceId]);
+      if (!space) throw new HttpError(404, 'El espacio no existe o no está disponible', 'NOT_FOUND');
+      const conflict = await tx.get(
+        `SELECT * FROM reservations
+         WHERE space_id = ? AND date = ? AND status = 'activa' AND id <> ?
+           AND start_hour < ? AND end_hour > ?
+         LIMIT 1`,
+        [data.spaceId, data.date, id, data.endHour, data.startHour]
+      );
+      if (conflict) throw conflictError(space, conflict);
+      // Si cambia la fecha u hora, el recordatorio vuelve a quedar pendiente.
+      await tx.run(
+        `UPDATE reservations
+         SET space_id = ?, date = ?, start_hour = ?, end_hour = ?, purpose = ?, reminder_sent_at = NULL
+         WHERE id = ? AND status = 'activa'`,
+        [data.spaceId, data.date, data.startHour, data.endHour, data.purpose, id]
+      );
     });
-    run();
-    return getById(id, user);
+    const reservation = await getById(id, user);
+    notify('modificacion', id);
+    return reservation;
   }
 
   // Cancelación lógica: la reserva se conserva en el historial con estado "cancelada" (trazabilidad).
-  function cancel(id, user) {
-    const reservation = getById(id, user);
+  async function cancel(id, user) {
+    const reservation = await getById(id, user);
     if (reservation.status === 'cancelada') throw new HttpError(409, 'La reserva ya estaba cancelada', 'ALREADY_CANCELLED');
     if (!config.ALLOW_PAST && reservation.finished) {
       throw new HttpError(409, 'No se puede liberar una reserva que ya finalizó', 'FINISHED');
     }
-    db.prepare("UPDATE reservations SET status = 'cancelada', cancelled_at = ? WHERE id = ?").run(clock().toISOString(), id);
-    return getById(id, user);
+    await db.run("UPDATE reservations SET status = 'cancelada', cancelled_at = ? WHERE id = ? AND status = 'activa'", [
+      clock().toISOString(), id,
+    ]);
+    const updated = await getById(id, user);
+    notify('cancelacion', id);
+    return updated;
   }
 
-  function list({ date, spaceId, responsible, includeCancelled, limit, user } = {}) {
+  async function list({ date, spaceId, responsible, includeCancelled, limit, user } = {}) {
     const now = nowInfo(clock(), config);
     let sql = `${BASE_SELECT} WHERE 1=1`;
     const params = [];
@@ -181,10 +191,9 @@ function createReservationService({ db, config, clock }) {
     if (!includeCancelled) sql += " AND r.status = 'activa'";
 
     sql += ' ORDER BY r.date, r.start_hour, s.name LIMIT ?';
-    const max = Math.min(Math.max(parseInt(limit, 10) || 500, 1), 1000);
-    params.push(max);
+    params.push(Math.min(Math.max(parseInt(limit, 10) || 500, 1), 1000));
 
-    return db.prepare(sql).all(...params).map((r) => toReservation(r, now));
+    return (await db.all(sql, params)).map((r) => toReservation(r, now));
   }
 
   return { create, update, cancel, list, getById };

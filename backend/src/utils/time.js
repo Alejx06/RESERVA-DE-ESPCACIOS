@@ -38,4 +38,13 @@ function nowInfo(date, config) {
 
 const hh = (h) => `${pad(h)}:00`;
 
-module.exports = { pad, formatDate, addDays, isValidDate, daysBetween, nowInfo, hh };
+const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+// '2026-10-30' -> 'viernes 30 de octubre de 2026'
+function longDateEs(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${DIAS[new Date(y, m - 1, d).getDay()]} ${d} de ${MESES[m - 1]} de ${y}`;
+}
+
+module.exports = { longDateEs, pad, formatDate, addDays, isValidDate, daysBetween, nowInfo, hh };
