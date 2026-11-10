@@ -142,7 +142,10 @@ npm run dev    # reinicia el servidor al guardar cambios
 
 ## Publicarlo en internet
 
-Ver `docs/guia-de-despliegue.md`.
+Guías para desplegar:
+
+- [Railway](docs/guia-despliegue-railway.md): aplicación Node.js y base MySQL en el mismo proyecto.
+- [Render](docs/guia-de-despliegue.md): aplicación en Render con MySQL externo.
 
 ## Solución de problemas
 

@@ -6,19 +6,19 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true
 const bool = (value, fallback = false) => (value === undefined || value === '' ? fallback : value === 'true');
 const num = (value, fallback) => (value === undefined || value === '' || Number.isNaN(Number(value)) ? fallback : Number(value));
 
-// Conexión a MySQL: se puede dar por partes (DB_HOST, DB_USER...) o con una sola URL (DATABASE_URL),
-// que es lo que entregan la mayoría de servicios de hosting.
+// Conexión a MySQL: acepta variables DB_*, las MYSQL_* de Railway o una URL de conexión.
 function readDbConfig() {
   const cfg = {
-    host: process.env.DB_HOST || '127.0.0.1', // 127.0.0.1 evita problemas de IPv6 con "localhost" en Windows
-    port: num(process.env.DB_PORT, 3306),
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'reservas',
+    host: process.env.DB_HOST || process.env.MYSQLHOST || '127.0.0.1', // 127.0.0.1 evita problemas de IPv6 con "localhost" en Windows
+    port: num(process.env.DB_PORT || process.env.MYSQLPORT, 3306),
+    user: process.env.DB_USER || process.env.MYSQLUSER || 'root',
+    password: process.env.DB_PASSWORD || process.env.MYSQLPASSWORD || '',
+    database: process.env.DB_NAME || process.env.MYSQLDATABASE || 'reservas',
     ssl: bool(process.env.DB_SSL),
   };
-  if (process.env.DATABASE_URL) {
-    const u = new URL(process.env.DATABASE_URL);
+  const connectionUrl = process.env.DATABASE_URL || process.env.MYSQL_URL;
+  if (connectionUrl) {
+    const u = new URL(connectionUrl);
     cfg.host = u.hostname;
     cfg.port = Number(u.port) || 3306;
     cfg.user = decodeURIComponent(u.username);
