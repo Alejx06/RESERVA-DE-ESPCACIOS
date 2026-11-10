@@ -36,7 +36,7 @@ ejemplo** (9 espacios y unas 190 reservas de las últimas semanas, para que los 
 
 | Perfil | Cómo obtiene su cuenta | Qué puede hacer |
 |---|---|---|
-| **Estudiante** | Se registra solo con su correo `@amigo.edu.co` y confirma con un código que llega al correo | Ver disponibilidad, reservar, modificar y cancelar **sus** reservas |
+| **Estudiante** | Se registra al instante con su correo `@amigo.edu.co` y una contraseña | Ver disponibilidad, reservar, modificar y cancelar **sus** reservas |
 | **Profesor** | Lo crea el administrador | Igual que el estudiante |
 | **Administrativo** | Lo crea el administrador (o la cuenta inicial) | Todo lo anterior sobre cualquier reserva, más: gestionar espacios y cuentas, ver reportes y la bitácora de correos |
 
@@ -44,7 +44,7 @@ Seguridad: contraseñas con scrypt, sesión en cookie `HttpOnly`/`SameSite=Stric
 respuestas sin revelar si un correo existe, cabeceras CSP, consultas parametrizadas, y el responsable de cada
 reserva sale de la sesión (no se puede falsear).
 
-## Correos (confirmación, cambios, cancelación, recordatorio y código de registro)
+## Correos (confirmación, cambios, cancelación y recordatorio)
 
 Al reservar, modificar o cancelar, el usuario recibe un correo. Además, **una hora antes** del inicio
 (`REMINDER_MINUTES_BEFORE`) se envía un recordatorio, una sola vez. Todo queda en la tabla `notifications`
@@ -65,9 +65,9 @@ y el administrador lo ve en la pantalla (sección *Notificaciones por correo*).
    ```
 3. Reinicia `npm start`: al arrancar verás `Correo : SMTP smtp.gmail.com`.
 
-Sin SMTP: con `MAIL_SIMULATE=true` los correos se imprimen en la consola (ideal para probar). Sin SMTP y sin
-simulación, las reservas funcionan igual, pero los correos no se envían y el **registro de estudiantes no
-puede enviar el código** (el administrador puede crear cuentas manualmente).
+El registro de estudiantes no depende del correo: la cuenta se activa inmediatamente y la persona inicia
+sesión al terminar el formulario. Sin SMTP, la aplicación sigue permitiendo registrarse y reservar, pero no
+se envían notificaciones de reserva. Con `MAIL_SIMULATE=true`, esos mensajes se imprimen en la consola.
 
 ## Reportes (solo administrativo)
 
@@ -98,7 +98,8 @@ sistema-reservas-espacios/
 └── docs/                         # manual de usuario, guía de despliegue, cronograma
 ```
 
-Tablas MySQL: `spaces`, `users`, `sessions`, `account_verifications`, `reservations`, `notifications`.
+Tablas MySQL: `spaces`, `users`, `sessions`, `reservations`, `notifications`. Las cuentas usan únicamente
+correos con dominio institucional; ya no requieren código de verificación.
 
 ## API REST (resumen)
 
@@ -137,7 +138,7 @@ npm run dev    # reinicia el servidor al guardar cambios
 
 1. `npm run seed` para que las reservas de ejemplo caigan en las fechas actuales.
 2. Si presentas fuera de 07:00–21:00, pon en `.env` `OPEN_HOUR=0` y `CLOSE_HOUR=24`.
-3. Guion sugerido: registrar un estudiante (código por correo) → reservar → ver el correo → mostrar el conflicto
+3. Guion sugerido: registrar un estudiante → reservar → mostrar el conflicto
    al reservar un bloque ocupado → entrar como administrador → reportes y Excel → bitácora de correos.
 
 ## Publicarlo en internet
@@ -150,6 +151,6 @@ Guías para desplegar:
 ## Solución de problemas
 
 - **"MySQL no está encendido"** → inicia el servicio de MySQL (o XAMPP). **"Usuario o contraseña incorrectos"** → revisa `.env`.
-- **El registro dice que el correo no está configurado** → completa SMTP o usa `MAIL_SIMULATE=true`.
+- **No llegan correos de reservas** → configura un proveedor SMTP o usa `MAIL_SIMULATE=true` para la demostración.
 - **Puerto ocupado** → cambia `PORT` en `.env`.
 - No incluyas `node_modules` ni `.env` al comprimir o subir el proyecto.

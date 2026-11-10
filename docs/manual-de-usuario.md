@@ -2,7 +2,7 @@
 
 ## Estudiantes
 1. **Crear la cuenta:** en la pantalla inicial elige *Crear cuenta*, escribe tu nombre, tu correo `@amigo.edu.co`
-   y una contraseña de al menos 8 caracteres. Te llegará un código de 8 dígitos al correo; escríbelo para activar la cuenta.
+   y una contraseña de al menos 8 caracteres. La cuenta se activa de inmediato y entrarás automáticamente.
 2. **Ver disponibilidad:** el panel superior muestra cuántos espacios están libres ahora. Filtra por salones,
    laboratorios o salas y elige la fecha en el calendario.
 3. **Reservar:** abre un espacio, toca un bloque *Libre*, elige la duración (hasta 4 horas), escribe el motivo y

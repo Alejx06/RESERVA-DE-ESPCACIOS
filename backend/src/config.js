@@ -48,7 +48,6 @@ module.exports = {
   BOOTSTRAP_ADMIN_EMAIL: process.env.BOOTSTRAP_ADMIN_EMAIL || '',
   BOOTSTRAP_ADMIN_PASSWORD: process.env.BOOTSTRAP_ADMIN_PASSWORD || '',
   SESSION_TTL_HOURS: 12,
-  EMAIL_VERIFICATION_TTL_MINUTES: 15,
 
   // Correo saliente (SMTP). Con Gmail: smtp.gmail.com, puerto 587 y una "contraseña de aplicación".
   SMTP_HOST: process.env.SMTP_HOST || '',

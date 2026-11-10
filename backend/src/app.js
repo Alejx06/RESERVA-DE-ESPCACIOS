@@ -41,7 +41,7 @@ function createApp(db, {
   app.use(express.json({ limit: '50kb' }));
 
   const ctx = { db, config, clock };
-  const auth = createAuthService({ ...ctx, sendVerificationEmail: mailer.sendVerificationEmail });
+  const auth = createAuthService(ctx);
   const access = authMiddleware(auth);
   const notifications = createNotificationService({ ...ctx, mailer });
   const services = {

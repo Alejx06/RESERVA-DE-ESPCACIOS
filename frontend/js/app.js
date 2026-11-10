@@ -625,7 +625,6 @@
       document.querySelectorAll('[data-auth-view]').forEach((tab) => tab.classList.toggle('active', tab === button));
       $('loginForm').hidden = register;
       $('registerForm').hidden = !register;
-      $('verificationForm').hidden = true;
     });
   });
 
@@ -650,61 +649,17 @@
       return;
     }
     try {
-      await Api.register({
+      const { user } = await Api.register({
         fullName: $('registerName').value,
         email: $('registerEmail').value,
         password: $('registerPassword').value,
       });
-      $('verificationEmail').value = $('registerEmail').value.trim();
-      $('verificationCode').value = '';
-      $('loginForm').hidden = true;
-      $('registerForm').hidden = true;
-      $('verificationForm').hidden = false;
-      $('verificationFeedback').textContent = 'Revisa tu correo institucional para obtener el código.';
-    } catch (err) {
-      $('registerFeedback').textContent = err.message;
-    }
-  });
-
-  $('verificationForm').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    $('verificationFeedback').textContent = '';
-    try {
-      await Api.verifyEmail({
-        email: $('verificationEmail').value,
-        code: $('verificationCode').value,
-      });
-      await Api.login({
-        email: $('verificationEmail').value,
-        password: $('registerPassword').value,
-      });
-      const { user } = await Api.me();
       $('registerPassword').value = '';
       $('registerConfirm').value = '';
       await enterApp(user);
     } catch (err) {
-      $('verificationFeedback').textContent = err.message;
+      $('registerFeedback').textContent = err.message;
     }
-  });
-
-  $('resendVerification').addEventListener('click', async () => {
-    $('verificationFeedback').textContent = '';
-    try {
-      await Api.resendVerification({ email: $('verificationEmail').value });
-      $('verificationFeedback').textContent = 'Si tu cuenta aún no está activada, enviamos un código. Revisa Recibidos y Spam. Si ya la activaste, vuelve a Iniciar sesión.';
-    } catch (err) {
-      $('verificationFeedback').textContent = err.message;
-    }
-  });
-
-  $('backToLogin').addEventListener('click', () => {
-    document.querySelectorAll('[data-auth-view]').forEach((tab) => {
-      tab.classList.toggle('active', tab.dataset.authView === 'login');
-    });
-    $('loginForm').hidden = false;
-    $('registerForm').hidden = true;
-    $('verificationForm').hidden = true;
-    $('loginFeedback').textContent = '';
   });
 
   $('logoutButton').addEventListener('click', async () => {

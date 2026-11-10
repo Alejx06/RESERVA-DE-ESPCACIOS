@@ -56,7 +56,8 @@ en Git.
 
 1. En los ajustes del servicio web, genera un dominio público. Configura `APP_URL` con la URL HTTPS asignada,
    por ejemplo `https://tu-servicio.up.railway.app`.
-2. Para permitir registro y verificación de estudiantes, configura SMTP en las variables del servicio:
+2. SMTP es opcional para el registro: las cuentas de estudiante se activan al instante sin enviar códigos.
+   Para recibir notificaciones por correo al reservar, configura SMTP en las variables del servicio:
 
    ```text
    SMTP_HOST=smtp.gmail.com
@@ -67,8 +68,8 @@ en Git.
    SMTP_FROM=Reservas Institucionales <tu-cuenta-remitente@gmail.com>
    ```
 
-   Usa una contraseña de aplicación de Google, no la contraseña normal. Sin SMTP el servidor puede iniciar,
-   pero no puede enviar códigos de verificación a los estudiantes.
+   Usa una contraseña de aplicación de Google, no la contraseña normal. Railway bloquea SMTP en los planes
+   Free, Trial y Hobby; para esos planes los correos no saldrán. El registro y las reservas seguirán funcionando.
 3. Guarda los cambios y despliega. Railway puede pedir confirmar/aplicar los cambios pendientes.
 
 ## 5. Comprobar el despliegue
@@ -76,7 +77,7 @@ en Git.
 1. Abre `https://TU-DOMINIO/api/health`; debe responder con `"status":"ok"` y `"database":"mysql"`.
 2. Inicia sesión con `BOOTSTRAP_ADMIN_EMAIL` y `BOOTSTRAP_ADMIN_PASSWORD`.
 3. Crea los espacios reales desde la administración: en producción no se insertan datos de demostración.
-4. Verifica registro y llegada del correo, crea y cancela una reserva y prueba un reporte.
+4. Verifica que el registro cree la cuenta y entre automáticamente, crea y cancela una reserva y prueba un reporte.
 
 En el primer arranque, la aplicación crea las tablas y la cuenta administrativa inicial. Los datos permanecen
 en la base MySQL de Railway; configura copias de seguridad y no ejecutes `npm run seed` en producción, porque

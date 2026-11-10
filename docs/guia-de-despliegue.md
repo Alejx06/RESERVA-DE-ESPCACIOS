@@ -41,7 +41,8 @@ Completa los valores solicitados:
 | `SMTP_FROM` | `Reservas Institucionales <tu-remitente@gmail.com>` con el Gmail remitente |
 
 El Blueprint ya deja `NODE_ENV=production`, `EMAIL_DOMAIN=amigo.edu.co` y los parámetros públicos de Gmail SMTP.
-Los estudiantes recibirán el código en la dirección `@amigo.edu.co` que registren.
+Los estudiantes pueden crear una cuenta inmediatamente con su correo `@amigo.edu.co`; no se requiere código
+de correo. SMTP es opcional y solo se usa para notificaciones de reservas.
 
 ## Verificar antes de presentar
 
@@ -49,11 +50,10 @@ Los estudiantes recibirán el código en la dirección `@amigo.edu.co` que regis
 2. Abre `https://TU-URL/api/health`; debe responder con estado `ok`.
 3. Inicia sesión con la cuenta administrativa creada por las variables de entorno.
 4. Crea los espacios reales desde la administración: en producción **no se cargan los espacios de demostración**.
-5. Registra un estudiante de prueba y confirma que el código llegue a su correo. Revisa también Spam.
+5. Registra un estudiante de prueba y confirma que pueda entrar automáticamente.
 6. Prueba iniciar sesión, crear y cancelar una reserva, dar de baja un espacio y generar un reporte.
 
-La conexión SMTP se probó desde el equipo local; aún hay que confirmar en Render que el proveedor de correo acepta
-conexiones desde ese servicio y que un correo de verificación llega de verdad.
+Si se configura SMTP, confirma que el proveedor acepte conexiones desde Render y que lleguen las notificaciones.
 
 ## Datos y recuperación
 

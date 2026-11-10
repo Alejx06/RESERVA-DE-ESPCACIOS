@@ -8,7 +8,6 @@ function authRouter({ auth, requireAuth, config }) {
   const maxAge = config.SESSION_TTL_HOURS * 60 * 60;
   const attemptsByAddress = new Map();
   const registrationByAddress = new Map();
-  const resendByAddress = new Map();
 
   function enforceLimit(map, address, maximum, period) {
     const now = Date.now();
@@ -25,25 +24,17 @@ function authRouter({ auth, requireAuth, config }) {
   }
 
   router.get('/options', (req, res) => {
-    res.json({
-      emailDomain: config.EMAIL_DOMAIN,
-      emailVerificationTtlMinutes: config.EMAIL_VERIFICATION_TTL_MINUTES,
-    });
+    res.json({ emailDomain: config.EMAIL_DOMAIN });
   });
 
   router.post('/register', asyncRoute(async (req, res) => {
-    enforceLimit(registrationByAddress, req.ip, 5, 60 * 60 * 1000);
-    const result = await auth.registerStudent(req.body || {});
-    res.status(202).json(result);
-  }));
-
-  router.post('/verify-email', asyncRoute(async (req, res) => {
-    res.json(await auth.verifyEmail(req.body || {}));
-  }));
-
-  router.post('/verification/resend', asyncRoute(async (req, res) => {
-    enforceLimit(resendByAddress, req.ip, 3, 15 * 60 * 1000);
-    res.status(202).json(await auth.resendVerification((req.body || {}).email));
+    enforceLimit(registrationByAddress, req.ip, 30, 60 * 60 * 1000);
+    const input = req.body || {};
+    await auth.registerStudent(input);
+    const session = await auth.login(input);
+    res.set('Set-Cookie', sessionCookie(session.token, config, maxAge));
+    res.set('Cache-Control', 'no-store');
+    res.status(201).json({ user: session.user, expiresAt: session.expiresAt });
   }));
 
   router.post('/login', asyncRoute(async (req, res) => {

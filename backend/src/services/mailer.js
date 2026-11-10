@@ -40,17 +40,7 @@ function createMailer(config) {
     return { status: 'enviado' };
   }
 
-  async function sendVerificationEmail({ email, fullName, code }) {
-    const minutes = config.EMAIL_VERIFICATION_TTL_MINUTES;
-    await sendMail({
-      to: email,
-      subject: 'Verifica tu cuenta de reservas institucionales',
-      text: `Hola ${fullName}. Tu código de verificación es ${code}. Vence en ${minutes} minutos.`,
-      html: `<p>Hola ${escapeHtml(fullName)}.</p><p>Tu código de verificación es:</p><p style="font-size:24px;font-weight:bold;letter-spacing:4px">${code}</p><p>Vence en ${minutes} minutos.</p>`,
-    });
-  }
-
-  return { isConfigured, sendMail, sendVerificationEmail };
+  return { isConfigured, sendMail };
 }
 
 module.exports = { createMailer, escapeHtml };

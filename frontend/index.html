@@ -45,19 +45,6 @@
       <p class="auth-feedback" id="registerFeedback" role="alert"></p>
       <button class="primary auth-submit" type="submit">Crear cuenta de estudiante</button>
     </form>
-    <form id="verificationForm" hidden>
-      <p>Enviamos un código de 8 dígitos a tu correo institucional. El código vence en 15 minutos.</p>
-      <label class="auth-field" for="verificationEmail">Correo institucional
-        <input id="verificationEmail" type="email" readonly required>
-      </label>
-      <label class="auth-field" for="verificationCode">Código de verificación
-        <input id="verificationCode" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="one-time-code" required>
-      </label>
-      <p class="auth-feedback" id="verificationFeedback" role="alert"></p>
-      <button class="primary auth-submit" type="submit">Verificar correo</button>
-      <button class="ghost auth-submit" id="resendVerification" type="button">Enviar otro código</button>
-      <button class="ghost auth-submit" id="backToLogin" type="button">Volver a iniciar sesión</button>
-    </form>
   </div>
 </section>
 

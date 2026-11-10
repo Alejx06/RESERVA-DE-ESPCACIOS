@@ -42,7 +42,7 @@ async function verifyPassword(password, storedHash) {
 
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
-function createAuthService({ db, config, clock, sendVerificationEmail }) {
+function createAuthService({ db, config, clock }) {
   const domain = config.EMAIL_DOMAIN || 'amigo.edu.co';
   const ttlHours = config.SESSION_TTL_HOURS || SESSION_TTL_HOURS;
   let dummyPasswordHash;
@@ -82,49 +82,26 @@ function createAuthService({ db, config, clock, sendVerificationEmail }) {
     }
   }
 
-  async function issueVerification(user) {
-    if (!sendVerificationEmail) {
-      throw new HttpError(503, 'El correo institucional no está configurado para enviar códigos de verificación', 'EMAIL_NOT_CONFIGURED');
-    }
-    const code = String(crypto.randomInt(0, 100000000)).padStart(8, '0');
-    const now = clock();
-    const expiresAt = new Date(now.getTime() + (config.EMAIL_VERIFICATION_TTL_MINUTES || 15) * 60 * 1000).toISOString();
-    const codeHash = await hashPassword(code);
-    await db.run(
-      `INSERT INTO account_verifications (user_id, code_hash, expires_at, attempts, created_at)
-       VALUES (?, ?, ?, 0, ?)
-       ON DUPLICATE KEY UPDATE code_hash = VALUES(code_hash), expires_at = VALUES(expires_at),
-         attempts = 0, created_at = VALUES(created_at)`,
-      [user.id, codeHash, expiresAt, now.toISOString()]
-    );
-    try {
-      await sendVerificationEmail({ email: user.email, fullName: user.fullName, code });
-    } catch (error) {
-      if (error instanceof HttpError) throw error;
-      console.error('No se pudo enviar el correo de verificación:', error);
-      throw new HttpError(502, 'No se pudo enviar el código al correo institucional. Intenta solicitarlo de nuevo más tarde.', 'EMAIL_DELIVERY_FAILED');
-    }
-  }
-
   async function registerStudent(input) {
-    let user;
     try {
-      user = await createAccount({ ...input, role: 'Estudiante', active: 0 });
+      return await createAccount({ ...input, role: 'Estudiante', active: 1 });
     } catch (error) {
-      if (error.code === 'DUPLICATE') {
-        const existing = await db.get('SELECT * FROM users WHERE email = ?', [normalizeEmail(input.email, domain)]);
-        if (existing && existing.role === 'Estudiante' && existing.active) {
-          throw new HttpError(409, 'Esta cuenta ya está activada. Inicia sesión con tu correo y contraseña.', 'ACCOUNT_ACTIVE');
-        }
-        if (existing && existing.role === 'Estudiante') {
-          await issueVerification(sanitizeUser(existing));
-        }
-        return { accepted: true };
-      }
-      throw error;
+      if (error.code !== 'DUPLICATE') throw error;
     }
-    await issueVerification(user);
-    return { accepted: true };
+
+    const normalizedEmail = normalizeEmail(input.email, domain);
+    const existing = await db.get('SELECT * FROM users WHERE email = ?', [normalizedEmail]);
+    if (!existing || existing.role !== 'Estudiante' || existing.active) {
+      throw new HttpError(409, 'Ya existe una cuenta con ese correo institucional', 'DUPLICATE');
+    }
+
+    const fullName = validateName(input.fullName);
+    const passwordHash = await hashPassword(validatePassword(input.password));
+    await db.transaction(async (tx) => {
+      await tx.run('UPDATE users SET full_name = ?, password_hash = ?, active = 1 WHERE id = ?', [fullName, passwordHash, existing.id]);
+      await tx.run('DELETE FROM account_verifications WHERE user_id = ?', [existing.id]);
+    });
+    return sanitizeUser({ ...existing, full_name: fullName });
   }
 
   async function createStaff(input) {
@@ -132,38 +109,6 @@ function createAuthService({ db, config, clock, sendVerificationEmail }) {
       throw new HttpError(400, 'Solo se pueden crear cuentas de profesor o administrativo', 'VALIDATION');
     }
     return createAccount(input);
-  }
-
-  async function verifyEmail({ email, code }) {
-    const normalizedEmail = normalizeEmail(email, domain);
-    const user = await db.get('SELECT id, active FROM users WHERE email = ? AND role = ?', [normalizedEmail, 'Estudiante']);
-    const verification = user && await db.get('SELECT * FROM account_verifications WHERE user_id = ?', [user.id]);
-    if (!user || user.active || !verification || !/^\d{8}$/.test(String(code || ''))) {
-      throw new HttpError(400, 'El código no es válido o ya venció', 'INVALID_VERIFICATION');
-    }
-    if (verification.expires_at <= clock().toISOString() || verification.attempts >= 5) {
-      await db.run('DELETE FROM account_verifications WHERE user_id = ?', [user.id]);
-      throw new HttpError(400, 'El código no es válido o ya venció', 'INVALID_VERIFICATION');
-    }
-    await db.run('UPDATE account_verifications SET attempts = attempts + 1 WHERE user_id = ?', [user.id]);
-    if (!(await verifyPassword(String(code), verification.code_hash))) {
-      if (verification.attempts + 1 >= 5) {
-        await db.run('DELETE FROM account_verifications WHERE user_id = ?', [user.id]);
-      }
-      throw new HttpError(400, 'El código no es válido o ya venció', 'INVALID_VERIFICATION');
-    }
-    await db.transaction(async (tx) => {
-      await tx.run('UPDATE users SET active = 1 WHERE id = ?', [user.id]);
-      await tx.run('DELETE FROM account_verifications WHERE user_id = ?', [user.id]);
-    });
-    return { verified: true };
-  }
-
-  async function resendVerification(email) {
-    const normalizedEmail = normalizeEmail(email, domain);
-    const userRow = await db.get('SELECT * FROM users WHERE email = ? AND role = ? AND active = 0', [normalizedEmail, 'Estudiante']);
-    if (userRow) await issueVerification(sanitizeUser(userRow));
-    return { accepted: true };
   }
 
   async function login({ email, password }) {
@@ -233,8 +178,6 @@ function createAuthService({ db, config, clock, sendVerificationEmail }) {
     createAccount,
     registerStudent,
     createStaff,
-    verifyEmail,
-    resendVerification,
     login,
     getSession,
     logout,

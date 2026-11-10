@@ -61,8 +61,6 @@ const Api = (() => {
     me: () => request('/auth/me'),
     login: (body) => request('/auth/login', { method: 'POST', body }),
     register: (body) => request('/auth/register', { method: 'POST', body }),
-    verifyEmail: (body) => request('/auth/verify-email', { method: 'POST', body }),
-    resendVerification: (body) => request('/auth/verification/resend', { method: 'POST', body }),
     logout: () => request('/auth/logout', { method: 'POST', body: {} }),
     stats: () => request('/stats'),
     spaces: (params) => request('/spaces' + qs(params)),

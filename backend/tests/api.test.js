@@ -17,7 +17,7 @@ const FIXED_NOW = new Date(2026, 9, 12, 9, 30, 0);
 const TODAY = '2026-10-12';
 const TOMORROW = '2026-10-13';
 
-let db, server, base, appInstance, adminCookie, studentCookie, actingCookie, verificationCode;
+let db, server, base, appInstance, adminCookie, studentCookie, actingCookie;
 let salon, lab;
 const mails = []; // correos "enviados" durante las pruebas
 
@@ -63,7 +63,6 @@ before(async () => {
   const mailer = {
     isConfigured: () => true,
     sendMail: async (mail) => { mails.push(mail); return { status: 'enviado' }; },
-    sendVerificationEmail: async ({ code }) => { verificationCode = code; },
   };
   appInstance = createApp(db, { config: testConfig, clock: () => FIXED_NOW, mailer });
   await new Promise((resolve) => { server = appInstance.listen(0, resolve); });
@@ -73,21 +72,13 @@ before(async () => {
     body: { email: 'admin@amigo.edu.co', password: 'Admin-Test-Password-123' },
     cookie: null,
   })).setCookie.split(';')[0];
-  await api('/api/auth/register', {
+  const registeredStudent = await api('/api/auth/register', {
     method: 'POST',
     body: { fullName: 'Ana Gómez', email: 'ana@amigo.edu.co', password: 'Student-Test-Password-123' },
     cookie: null,
   });
-  await api('/api/auth/verify-email', {
-    method: 'POST',
-    body: { email: 'ana@amigo.edu.co', code: verificationCode },
-    cookie: null,
-  });
-  studentCookie = (await api('/api/auth/login', {
-    method: 'POST',
-    body: { email: 'ana@amigo.edu.co', password: 'Student-Test-Password-123' },
-    cookie: null,
-  })).setCookie.split(';')[0];
+  assert.equal(registeredStudent.status, 201);
+  studentCookie = registeredStudent.setCookie.split(';')[0];
   actingCookie = studentCookie;
 });
 
@@ -116,37 +107,34 @@ test('protege la API, restringe el registro al dominio institucional y asigna pe
     body: { fullName: 'Cuenta Corta', email: 'student-short@amigo.edu.co', password: 'abc1234' },
     cookie: null,
   })).status, 400);
-  assert.equal((await api('/api/auth/register', {
+  const registeredStudent2 = await api('/api/auth/register', {
     method: 'POST',
     body: { fullName: 'Cuenta Inválida', email: 'student2@amigo.edu.co', password: 'abc12345', role: 'Administrativo' },
     cookie: null,
-  })).status, 202);
-  assert.equal((await api('/api/auth/login', {
-    method: 'POST',
-    body: { email: 'student2@amigo.edu.co', password: 'abc12345' },
-    cookie: null,
-  })).status, 401);
-  assert.equal((await api('/api/auth/verify-email', {
-    method: 'POST',
-    body: { email: 'student2@amigo.edu.co', code: '00000000' },
-    cookie: null,
-  })).status, 400);
-  assert.equal((await api('/api/auth/verify-email', {
-    method: 'POST',
-    body: { email: 'student2@amigo.edu.co', code: verificationCode },
-    cookie: null,
-  })).status, 200);
+  });
+  assert.equal(registeredStudent2.status, 201);
+  assert.equal(registeredStudent2.body.user.role, 'Estudiante');
+  assert.equal((await api('/api/auth/me', { cookie: registeredStudent2.setCookie.split(';')[0] })).body.user.email, 'student2@amigo.edu.co');
   assert.equal((await api('/api/auth/register', {
     method: 'POST',
     body: { fullName: 'Cuenta Ya Activada', email: 'student2@amigo.edu.co', password: 'abc12345' },
     cookie: null,
   })).status, 409);
-  const student2 = await api('/api/auth/login', {
+  await appInstance.locals.services.auth.createAccount({
+    fullName: 'Registro Pendiente',
+    email: 'pending@amigo.edu.co',
+    password: 'Old-Student-Password-123',
+    role: 'Estudiante',
+    active: 0,
+  });
+  const resumedRegistration = await api('/api/auth/register', {
     method: 'POST',
-    body: { email: 'student2@amigo.edu.co', password: 'abc12345' },
+    body: { fullName: 'Registro Recuperado', email: 'pending@amigo.edu.co', password: 'New-Student-Password-123' },
     cookie: null,
   });
-  assert.equal(student2.body.user.role, 'Estudiante');
+  assert.equal(resumedRegistration.status, 201);
+  assert.equal(resumedRegistration.body.user.email, 'pending@amigo.edu.co');
+  assert.equal((await api('/api/auth/me', { cookie: resumedRegistration.setCookie.split(';')[0] })).body.user.fullName, 'Registro Recuperado');
   assert.equal((await api('/api/spaces', { method: 'POST', body: { name: 'No permitido', type: 'sala', capacity: 8 }, cookie: studentCookie })).status, 403);
   assert.equal((await api('/api/reservations', {
     method: 'POST',
